@@ -8,6 +8,9 @@ const RUTAS_ADMIN = ["/configuracion"];
 // redireccionamientos optimistas. La verificación real se repite
 // en el servidor (src/lib/auth.ts) antes de mostrar o cambiar datos.
 export async function updateSession(request: NextRequest) {
+  // Webhooks externos: sin sesión, se validan con su propia firma.
+  if (request.nextUrl.pathname.startsWith("/api/webhooks/")) return NextResponse.next();
+
   let response = NextResponse.next({ request });
 
   const supabase = createServerClient(

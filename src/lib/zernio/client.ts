@@ -1,0 +1,190 @@
+import "server-only";
+
+// Cliente mínimo de la API de Zernio (https://zernio.com/api/v1). Solo servidor.
+const BASE = "https://zernio.com/api/v1";
+
+export class ZernioError extends Error {
+  constructor(
+    message: string,
+    public status: number,
+    public body: unknown,
+  ) {
+    super(message);
+  }
+}
+
+function apiKey() {
+  const key = process.env.ZERNIO_API_KEY;
+  if (!key) throw new Error("Falta ZERNIO_API_KEY");
+  return key;
+}
+
+export async function zernio<T>(
+  path: string,
+  init: RequestInit & { query?: Record<string, string | number | boolean | undefined> } = {},
+): Promise<T> {
+  const url = new URL(BASE + path);
+  for (const [k, v] of Object.entries(init.query ?? {})) {
+    if (v !== undefined) url.searchParams.set(k, String(v));
+  }
+  const res = await fetch(url, {
+    ...init,
+    headers: {
+      Authorization: `Bearer ${apiKey()}`,
+      ...(init.body ? { "Content-Type": "application/json" } : {}),
+      ...init.headers,
+    },
+    cache: "no-store",
+  });
+  const text = await res.text();
+  const body = text ? safeJson(text) : null;
+  if (!res.ok) {
+    const msg = (body as { error?: string } | null)?.error ?? res.statusText;
+    throw new ZernioError(`Zernio ${res.status}: ${msg}`, res.status, body);
+  }
+  return body as T;
+}
+
+function safeJson(t: string) {
+  try {
+    return JSON.parse(t);
+  } catch {
+    return t;
+  }
+}
+
+// ---------- Tipos (solo los campos que usamos) ----------
+export type ZernioPlatform = "whatsapp" | "facebook" | "instagram" | "tiktok" | string;
+
+export type ZernioAccount = {
+  _id: string;
+  platform: ZernioPlatform;
+  username?: string | null;
+  displayName?: string | null;
+  isActive?: boolean;
+  needsReconnection?: boolean;
+  profileId?: { _id: string } | string;
+};
+
+export type ZernioAttachment = {
+  type: string;
+  mimeType?: string | null;
+  url?: string | null;
+  filename?: string | null;
+};
+
+export type ZernioConversation = {
+  id: string;
+  accountId: string;
+  platform: ZernioPlatform;
+  participantId?: string | null;
+  participantName?: string | null;
+  participantUsername?: string | null;
+  updatedTime?: string;
+};
+
+export type ZernioListedMessage = {
+  id: string;
+  conversationId: string;
+  accountId: string;
+  platform: ZernioPlatform;
+  message?: string | null;
+  senderId?: string | null;
+  senderName?: string | null;
+  senderPhoneNumber?: string | null;
+  direction: "incoming" | "outgoing";
+  attachments?: ZernioAttachment[];
+  sentAt?: string | null;
+  createdAt?: string | null;
+  deliveryStatus?: string | null;
+};
+
+// ---------- Llamadas ----------
+export async function getDefaultProfileId(): Promise<string> {
+  const { profiles } = await zernio<{ profiles: { _id: string; isDefault?: boolean }[] }>("/profiles");
+  const p = profiles.find((x) => x.isDefault) ?? profiles[0];
+  if (!p) throw new Error("La cuenta de Zernio no tiene perfiles");
+  return p._id;
+}
+
+export async function listAccounts(): Promise<ZernioAccount[]> {
+  const { accounts } = await zernio<{ accounts: ZernioAccount[] }>("/accounts");
+  return accounts;
+}
+
+export async function getConnectUrl(platform: string, redirectUrl: string): Promise<string> {
+  const profileId = await getDefaultProfileId();
+  // WhatsApp sin "onboarding" = coexistencia (el número sigue en la app del celular).
+  const { authUrl } = await zernio<{ authUrl: string }>(`/connect/${platform}`, {
+    query: { profileId, redirect_url: redirectUrl },
+  });
+  return authUrl;
+}
+
+export async function listConversations(accountId: string, cursor?: string) {
+  return zernio<{ data: ZernioConversation[]; pagination?: { hasMore: boolean; nextCursor?: string | null } }>(
+    "/inbox/conversations",
+    { query: { accountId, limit: 100, cursor } },
+  );
+}
+
+export async function listMessages(conversationId: string, accountId: string, cursor?: string) {
+  return zernio<{ messages: ZernioListedMessage[]; pagination?: { hasMore: boolean; nextCursor?: string | null } }>(
+    `/inbox/conversations/${encodeURIComponent(conversationId)}/messages`,
+    { query: { accountId, limit: 100, cursor } },
+  );
+}
+
+/** Descarga un adjunto. Las URLs de WhatsApp de Zernio piden la API key. */
+export async function downloadAttachment(url: string): Promise<{ bytes: ArrayBuffer; contentType: string | null }> {
+  const isZernio = url.startsWith("/") || new URL(url).hostname.endsWith("zernio.com");
+  const full = url.startsWith("/") ? `https://zernio.com${url.startsWith("/api") ? "" : "/api"}${url}` : url;
+  const res = await fetch(full, {
+    headers: isZernio ? { Authorization: `Bearer ${apiKey()}` } : undefined,
+    cache: "no-store",
+  });
+  if (!res.ok) throw new Error(`No se pudo descargar el adjunto (${res.status})`);
+  return { bytes: await res.arrayBuffer(), contentType: res.headers.get("content-type") };
+}
+
+export type WebhookSetting = { _id: string; name: string; url: string; events: string[]; isActive: boolean };
+
+export const WEBHOOK_EVENTS = [
+  "message.received",
+  "message.sent",
+  "message.delivered",
+  "message.read",
+  "message.failed",
+  "comment.received",
+] as const;
+
+export async function listWebhooks() {
+  const { webhooks } = await zernio<{ webhooks: WebhookSetting[] }>("/webhooks/settings");
+  return webhooks;
+}
+
+export const WEBHOOK_NAME = "CRM Yesandy";
+
+/** Crea o actualiza el endpoint del CRM en Zernio, con el secreto para firmar. */
+export async function registerWebhook(url: string): Promise<WebhookSetting> {
+  const secret = process.env.ZERNIO_WEBHOOK_SECRET;
+  if (!secret) throw new Error("Falta ZERNIO_WEBHOOK_SECRET");
+  const existing = (await listWebhooks()).find((w) => w.name === WEBHOOK_NAME);
+  const body = { name: WEBHOOK_NAME, url, events: [...WEBHOOK_EVENTS], secret, isActive: true };
+  if (existing) {
+    const r = await zernio<{ webhook: WebhookSetting }>("/webhooks/settings", {
+      method: "PUT",
+      body: JSON.stringify({ webhookId: existing._id, ...body }),
+    });
+    return r.webhook ?? { ...existing, ...body };
+  }
+  const r = await zernio<{ webhook: WebhookSetting }>("/webhooks/settings", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+  return r.webhook;
+}
+
+export async function sendTestWebhook(webhookId: string) {
+  return zernio("/webhooks/test", { method: "POST", body: JSON.stringify({ webhookId }) });
+}

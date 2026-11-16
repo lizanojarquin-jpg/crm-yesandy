@@ -2,11 +2,17 @@ import { requireAdmin } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { Card } from "@/components/ui/card";
 import { CambiarPinForm } from "./cambiar-pin-form";
+import { Canales } from "./canales";
 
 export const metadata = { title: "Configuración · CRM Yesandy" };
 
-export default async function ConfiguracionPage() {
+export default async function ConfiguracionPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ conectado?: string; error?: string }>;
+}) {
   await requireAdmin();
+  const sp = await searchParams;
 
   const admin = createAdminClient();
   const { data, error } = await admin.auth.admin.listUsers({ perPage: 100 });
@@ -48,9 +54,7 @@ export default async function ConfiguracionPage() {
 
       <section className="mt-8">
         <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-muted">Canales</h2>
-        <Card>
-          <p className="text-sm text-muted">La conexión de WhatsApp, Facebook, Instagram y TikTok llega en la Fase 3.</p>
-        </Card>
+        <Canales conectado={sp.conectado} error={sp.error} />
       </section>
     </div>
   );
