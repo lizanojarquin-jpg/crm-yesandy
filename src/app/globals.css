@@ -1,0 +1,44 @@
+@import "tailwindcss";
+
+/* Paleta sobria provisional. La identidad visual final se define en la Fase 4. */
+:root {
+  --background: #f7f6f4;
+  --surface: #ffffff;
+  --foreground: #1c1b1a;
+  --muted: #6b6762;
+  --border: #e5e2dd;
+  --accent: #9d2a4e;
+  --accent-foreground: #ffffff;
+  --danger: #b42318;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: #141312;
+    --surface: #1e1d1b;
+    --foreground: #eeebe7;
+    --muted: #a19c95;
+    --border: #2f2d2a;
+    --accent: #e0789b;
+    --accent-foreground: #1c1b1a;
+    --danger: #f97066;
+  }
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-surface: var(--surface);
+  --color-foreground: var(--foreground);
+  --color-muted: var(--muted);
+  --color-border: var(--border);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-danger: var(--danger);
+  --font-sans: var(--font-geist-sans);
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-geist-sans), system-ui, sans-serif;
+}

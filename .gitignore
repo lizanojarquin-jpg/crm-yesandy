@@ -1,0 +1,24 @@
+# Variables de entorno (nunca al repo)
+.env
+.env.local
+.env.*.local
+
+# Dependencias y build
+node_modules/
+.next/
+out/
+build/
+*.tsbuildinfo
+next-env.d.ts
+
+# Supabase local
+supabase/.temp/
+supabase/.branches/
+
+# Vercel
+.vercel/
+
+# Sistema / editor
+.DS_Store
+Thumbs.db
+*.log
