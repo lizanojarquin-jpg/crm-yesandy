@@ -9,6 +9,12 @@ Stack: Next.js 16 (App Router, TypeScript, Tailwind) · Supabase (Auth, Postgres
 3. `npm.cmd run crear-usuarios` crea o actualiza las cuentas del equipo. Pide cada PIN en la terminal.
 4. `npm.cmd run dev` y abre http://localhost:3000
 
+## Producción
+- Dirección: https://crm-yesandy.vercel.app (proyecto `crm-yesandy` en Vercel).
+- Publicar cambios: `npx.cmd vercel@latest deploy --prod` desde la carpeta del proyecto. Para que cada push a GitHub publique solo, conecta tu cuenta de GitHub en Vercel (Account Settings → Authentication) y luego `npx.cmd vercel@latest git connect`.
+- Las variables viven en Vercel (Settings → Environment Variables). `NEXT_PUBLIC_SITE_URL` debe ser la dirección de producción: el webhook y el regreso al conectar canales dependen de ella.
+- Webhook de Zernio: `https://crm-yesandy.vercel.app/api/webhooks/zernio` (botón "Actualizar webhook" en Configuración).
+
 ## Acceso
 - Se entra con un usuario (`Admin`, `Ventas 1` … `Ventas 4`) y un PIN de 6 dígitos.
 - Por dentro, cada usuario es `<usuario>@crm.yesandycr.com` en Supabase Auth. Ese correo no recibe mensajes.
