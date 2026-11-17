@@ -25,5 +25,9 @@ Stack: Next.js 16 (App Router, TypeScript, Tailwind) · Supabase (Auth, Postgres
 - `src/proxy.ts`: refresca la sesión y redirige según el login y el rol.
 - `src/lib/auth.ts`: verifica la sesión y el rol en el servidor (`getUsuarioActual`, `requireAdmin`).
 - `src/lib/supabase/`: clientes para el navegador, el servidor, el administrador (solo servidor) y el proxy.
-- `src/components/ui/`: componentes base (Button, Field, Card, EmptyState).
+- `src/components/ui/`: componentes base (Button, Field, Textarea, Card, Chip, Avatar, EmptyState).
+- `src/app/(app)/page.tsx` y `src/app/(app)/c/[id]/`: bandeja y conversación. Las piezas están en `src/app/(app)/_bandeja/`.
+- `src/lib/inbox/`: consultas (con RLS), filtros, etiquetas en español y la regla de las 24 h (`ventana.ts`).
+- `src/lib/zernio/`: cliente de la API, firma del webhook y guardado de eventos (`ingest.ts`).
+- `scripts/reprocesar-eventos.mts`: vuelve a procesar eventos del webhook que quedaron ignorados.
 - `scripts/crear-usuarios.mjs`: alta de usuarios del equipo.

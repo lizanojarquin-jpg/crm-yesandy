@@ -31,7 +31,7 @@ export async function zernio<T>(
     ...init,
     headers: {
       Authorization: `Bearer ${apiKey()}`,
-      ...(init.body ? { "Content-Type": "application/json" } : {}),
+      ...(typeof init.body === "string" ? { "Content-Type": "application/json" } : {}),
       ...init.headers,
     },
     cache: "no-store",
@@ -133,6 +133,75 @@ export async function listMessages(conversationId: string, accountId: string, cu
     `/inbox/conversations/${encodeURIComponent(conversationId)}/messages`,
     { query: { accountId, limit: 100, cursor } },
   );
+}
+
+// ---------- Envío ----------
+function idem(key?: string): HeadersInit | undefined {
+  return key ? { "Idempotency-Key": key } : undefined;
+}
+
+/** Envía un mensaje directo. Devuelve el id de la plataforma (el mismo que llega por webhook). */
+export async function sendInboxMessage(
+  conversationId: string,
+  p: {
+    accountId: string;
+    message?: string;
+    attachmentUrl?: string;
+    attachmentType?: "image" | "video" | "audio" | "file";
+    humanAgentTag?: boolean;
+    idempotencyKey?: string;
+  },
+): Promise<{ messageId: string }> {
+  const body: Record<string, unknown> = { accountId: p.accountId };
+  if (p.message) body.message = p.message;
+  if (p.attachmentUrl) {
+    body.attachmentUrl = p.attachmentUrl;
+    body.attachmentType = p.attachmentType ?? "image";
+  }
+  if (p.humanAgentTag) {
+    // Facebook/Instagram fuera de las 24 h: respuesta de una persona (hasta 7 días).
+    body.messagingType = "MESSAGE_TAG";
+    body.messageTag = "HUMAN_AGENT";
+  }
+  const r = await zernio<{ data: { messageId: string } }>(
+    `/inbox/conversations/${encodeURIComponent(conversationId)}/messages`,
+    { method: "POST", body: JSON.stringify(body), headers: idem(p.idempotencyKey) },
+  );
+  return { messageId: r.data.messageId };
+}
+
+/** Responde en público a un comentario. */
+export async function replyToComment(
+  postId: string,
+  p: { accountId: string; commentId: string; message: string; idempotencyKey?: string },
+): Promise<{ commentId: string }> {
+  const r = await zernio<{ data: { commentId: string } }>(`/inbox/comments/${encodeURIComponent(postId)}`, {
+    method: "POST",
+    body: JSON.stringify({ accountId: p.accountId, commentId: p.commentId, message: p.message }),
+    headers: idem(p.idempotencyKey),
+  });
+  return { commentId: r.data.commentId };
+}
+
+/** Respuesta privada (mensaje directo) a un comentario. Solo Facebook e Instagram, una vez por comentario, hasta 7 días. */
+export async function privateReplyToComment(
+  postId: string,
+  commentId: string,
+  p: { accountId: string; message: string },
+): Promise<{ messageId: string | null }> {
+  const r = await zernio<{ messageId?: string }>(
+    `/inbox/comments/${encodeURIComponent(postId)}/${encodeURIComponent(commentId)}/private-reply`,
+    { method: "POST", body: JSON.stringify({ accountId: p.accountId, message: p.message }) },
+  );
+  return { messageId: r.messageId ?? null };
+}
+
+/** Marca la conversación como leída en la plataforma (en WhatsApp envía los checks azules). */
+export async function markConversationRead(conversationId: string, accountId: string) {
+  await zernio(`/inbox/conversations/${encodeURIComponent(conversationId)}/read`, {
+    method: "POST",
+    body: JSON.stringify({ accountId }),
+  });
 }
 
 /** Descarga un adjunto. Las URLs de WhatsApp de Zernio piden la API key. */

@@ -1,18 +1,24 @@
 import { getUsuarioActual } from "@/lib/auth";
-import { EmptyState } from "@/components/ui/empty-state";
+import { leerFiltros } from "@/lib/inbox/filtros";
+import { BandejaShell } from "./_bandeja/shell";
 
 export const metadata = { title: "Bandeja · CRM Yesandy" };
 
-export default async function BandejaPage() {
+export default async function BandejaPage({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
   const usuario = await getUsuarioActual();
+  const filtros = leerFiltros(await searchParams);
   return (
-    <div className="mx-auto max-w-3xl px-4 py-6">
-      <h1 className="text-xl font-semibold">Hola, {usuario.nombre}</h1>
-      <p className="text-sm text-muted">Bandeja de conversaciones</p>
-      <EmptyState
-        titulo="Todavía no hay conversaciones"
-        descripcion="Cuando se conecten WhatsApp, Facebook, Instagram y TikTok, los mensajes van a aparecer aquí."
-      />
-    </div>
+    <BandejaShell filtros={filtros} usuarioId={usuario.id} ruta="/">
+      <div className="hidden items-center justify-center lg:flex">
+        <div className="text-center">
+          <p className="font-medium">Elige una conversación</p>
+          <p className="text-sm text-muted">Los mensajes nuevos aparecen solos, sin recargar.</p>
+        </div>
+      </div>
+    </BandejaShell>
   );
 }
