@@ -1,6 +1,7 @@
 import { Fragment } from "react";
 import type { Mensaje } from "@/lib/inbox/queries";
 import { claveDia, encabezadoDia, hora } from "@/lib/formato";
+import { textoEtapa } from "@/lib/inbox/etiquetas";
 
 export function Mensajes({ mensajes, nombres }: { mensajes: Mensaje[]; nombres: Map<string, string> }) {
   if (!mensajes.length) {
@@ -58,6 +59,12 @@ function Burbuja({ m, nombres }: { m: Mensaje; nombres: Map<string, string> }) {
           {sale && <Estado s={m.delivery_status} />}
         </p>
       </div>
+      {m.evidencia && (
+        <p className="mt-0.5 text-xs font-medium text-amber-700 dark:text-amber-300">
+          🔎 La IA detectó: {textoEtapa(m.evidencia.to_stage)}
+          {m.evidencia.confirmada ? " · confirmado" : " · por confirmar"}
+        </p>
+      )}
       {m.delivery_status === "failed" && (
         <p className="mt-0.5 text-xs text-danger">No se entregó{m.error_message ? `: ${m.error_message}` : ""}</p>
       )}
@@ -78,10 +85,14 @@ function Adjunto({ a }: { a: Mensaje["adjuntos"][number] }) {
     return <p className="mb-1 text-sm opacity-80">📎 Adjunto ({a.type === "image" ? "imagen" : a.type}) no disponible</p>;
   }
   if (a.type === "image" || a.type === "sticker") {
+    const tipo = a.detected_kind === "payment_receipt" ? "Comprobante de pago" : a.detected_kind === "shipping_guide" ? "Guía de envío" : null;
     return (
-      <a href={a.url} target="_blank" rel="noreferrer" className="-mx-1 mb-1 block">
+      <a href={a.url} target="_blank" rel="noreferrer" className="relative -mx-1 mb-1 block">
         {/* eslint-disable-next-line @next/next/no-img-element -- URL firmada y temporal de Supabase */}
-        <img src={a.url} alt="Imagen enviada en el chat" loading="lazy" className="max-h-80 w-auto rounded-xl" />
+        <img src={a.url} alt={tipo ?? "Imagen enviada en el chat"} loading="lazy" className="max-h-80 w-auto rounded-xl" />
+        {tipo && (
+          <span className="absolute top-2 left-2 rounded-full bg-black/70 px-2 py-0.5 text-[11px] font-medium text-white">{tipo}</span>
+        )}
       </a>
     );
   }

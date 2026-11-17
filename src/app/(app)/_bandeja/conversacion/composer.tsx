@@ -2,6 +2,7 @@
 
 import { startTransition, useActionState, useEffect, useRef, useState } from "react";
 import { enviar, type Estado } from "../acciones";
+import { PlantillaPicker, type PlantillaOpcion } from "./plantilla-picker";
 
 type Props = {
   conversationId: string;
@@ -9,6 +10,9 @@ type Props = {
   permitePrivado: boolean;
   puede: boolean;
   aviso: string | null;
+  /** Solo WhatsApp fuera de las 24 h. */
+  plantillas?: PlantillaOpcion[];
+  primerNombre?: string;
 };
 
 /** Reduce fotos del celular (varios MB) a JPEG de 1600 px antes de enviarlas. */
@@ -28,7 +32,7 @@ async function comprimir(f: File): Promise<File> {
   }
 }
 
-export function Composer({ conversationId, esComentario, permitePrivado, puede, aviso }: Props) {
+export function Composer({ conversationId, esComentario, permitePrivado, puede, aviso, plantillas, primerNombre }: Props) {
   const [texto, setTexto] = useState("");
   const [imagen, setImagen] = useState<{ archivo: File; vista: string } | null>(null);
   const [privado, setPrivado] = useState(false);
@@ -65,8 +69,11 @@ export function Composer({ conversationId, esComentario, permitePrivado, puede, 
 
   if (!puede) {
     return (
-      <div className="border-t border-border bg-surface px-4 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+      <div className="max-h-[60dvh] overflow-y-auto border-t border-border bg-surface px-4 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
         <p className="rounded-lg bg-amber-500/10 px-3 py-2 text-sm text-amber-800 dark:text-amber-200">{aviso}</p>
+        {plantillas && (
+          <PlantillaPicker conversationId={conversationId} plantillas={plantillas} primerNombre={primerNombre ?? ""} />
+        )}
       </div>
     );
   }

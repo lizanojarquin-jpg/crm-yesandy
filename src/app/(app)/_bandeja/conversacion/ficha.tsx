@@ -100,6 +100,7 @@ export async function Ficha({
                   {e.source === "ai" ? "detectado por IA" : e.created_by ? nombres.get(e.created_by) ?? "equipo" : "equipo"}
                   {e.source === "ai" && !e.confirmed_at && <Chip tono="aviso">sin confirmar</Chip>}
                 </p>
+                {e.note && <p className="text-xs text-muted italic">{e.note}</p>}
               </li>
             ))}
           </ol>

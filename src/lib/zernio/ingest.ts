@@ -8,6 +8,7 @@ import {
   listMessages,
   type ZernioAttachment,
 } from "./client";
+import { clasificarMensaje } from "@/lib/ia/clasificador";
 
 type Platform = Database["public"]["Enums"]["channel_platform"];
 type AttachmentType = Database["public"]["Enums"]["attachment_type"];
@@ -312,6 +313,8 @@ async function handleMessage(e: MessageEvent): Promise<ProcessResult> {
   });
   if (!messageId) return { status: "duplicate" };
   if (m.attachments?.length) await saveAttachments(conversationId, messageId, m.attachments);
+  // Seguimiento automático: si el mensaje muestra pedido, pago, envío o entrega, mueve la etapa.
+  await clasificarMensaje(messageId).catch((err) => console.error("clasificador", messageId, err));
   return { status: "ok" };
 }
 

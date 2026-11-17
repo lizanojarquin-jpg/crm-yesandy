@@ -5,6 +5,7 @@ import { conQs, leerFiltros, qs } from "@/lib/inbox/filtros";
 import { listarEquipo, listarMensajes, obtenerConversacion } from "@/lib/inbox/queries";
 import { nombreContacto, plataforma } from "@/lib/inbox/etiquetas";
 import { ventanaMensajes } from "@/lib/inbox/ventana";
+import { plantillasUsables } from "@/lib/inbox/plantillas";
 import { Avatar } from "@/components/ui/avatar";
 import { BandejaShell } from "../../_bandeja/shell";
 import { cambiarEstado, tomar } from "../../_bandeja/acciones";
@@ -44,6 +45,9 @@ export default async function ConversacionPage({
     ? { puede: true, aviso: null }
     : ventanaMensajes(conv.canal.platform, conv.last_inbound_at);
   const atiende = conv.assigned_to ? nombres.get(conv.assigned_to) : null;
+  // Fuera de las 24 h de WhatsApp solo se puede escribir con una plantilla aprobada.
+  const plantillas =
+    !ventana.puede && conv.canal.platform === "whatsapp" ? await plantillasUsables(conv.canal.zernio_account_id) : undefined;
 
   const cabecera = (
     <>
@@ -112,6 +116,8 @@ export default async function ConversacionPage({
             permitePrivado={esComentario && (conv.canal.platform === "facebook" || conv.canal.platform === "instagram")}
             puede={ventana.puede}
             aviso={ventana.aviso}
+            plantillas={plantillas}
+            primerNombre={conv.contacto.name?.trim().split(/\s+/)[0] ?? ""}
           />
         }
         ficha={

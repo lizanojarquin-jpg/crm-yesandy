@@ -170,6 +170,59 @@ export async function sendInboxMessage(
   return { messageId: r.data.messageId };
 }
 
+// ---------- Plantillas de WhatsApp ----------
+export type Plantilla = {
+  id: string;
+  name: string;
+  language: string;
+  status: string;
+  category: string;
+  components?: { type: string; text?: string; format?: string }[];
+};
+
+export async function listTemplates(accountId: string): Promise<Plantilla[]> {
+  const r = await zernio<{ templates: Plantilla[] }>("/whatsapp/templates", { query: { accountId } });
+  return r.templates ?? [];
+}
+
+/** Manda una plantilla a revisión de Meta (tarda hasta 24 h). */
+export async function createTemplate(p: {
+  accountId: string;
+  name: string;
+  category: "UTILITY" | "MARKETING";
+  language: string;
+  text: string;
+  examples: string[];
+}): Promise<{ status: string }> {
+  const body: Record<string, unknown> = { type: "body", text: p.text };
+  if (p.examples.length) body.example = { body_text: [p.examples] };
+  const r = await zernio<{ template: { status: string } }>("/whatsapp/templates", {
+    method: "POST",
+    body: JSON.stringify({ accountId: p.accountId, name: p.name, category: p.category, language: p.language, components: [body] }),
+  });
+  return { status: r.template?.status ?? "PENDING" };
+}
+
+/** Envía una plantilla aprobada dentro de una conversación de WhatsApp (sirve fuera de las 24 h). */
+export async function sendTemplate(
+  conversationId: string,
+  p: { accountId: string; name: string; language: string; params: string[]; idempotencyKey?: string },
+): Promise<{ messageId: string | null }> {
+  const element: Record<string, unknown> = { name: p.name, language: p.language };
+  if (p.params.length) {
+    element.components = [{ type: "body", parameters: p.params.map((text) => ({ type: "text", text })) }];
+  }
+  const r = await zernio<{ data?: { messageId?: string } }>(
+    `/inbox/conversations/${encodeURIComponent(conversationId)}/messages`,
+    {
+      method: "POST",
+      body: JSON.stringify({ accountId: p.accountId, template: { elements: [element] } }),
+      headers: idem(p.idempotencyKey),
+    },
+  );
+  return { messageId: r.data?.messageId ?? null };
+}
+
 /** Responde en público a un comentario. */
 export async function replyToComment(
   postId: string,

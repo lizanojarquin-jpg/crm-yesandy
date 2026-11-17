@@ -59,7 +59,7 @@ export async function obtenerConversacion(id: string) {
     .select(
       "id, kind, status, unread_count, assigned_to, external_conversation_id, external_post_id, post_permalink, last_inbound_at, contact_id, " +
         "contacto:contacts(id, name, phone, stage, stage_pending_review, notes, follow_up_at, loss_reason, contact_identities(platform, handle)), " +
-        "canal:channel_accounts(platform, display_name)",
+        "canal:channel_accounts(platform, display_name, zernio_account_id)",
     )
     .eq("id", id)
     .maybeSingle()
@@ -90,7 +90,7 @@ export type ConversacionDetalle = {
     loss_reason: string | null;
     contact_identities: { platform: import("./etiquetas").Plataforma; handle: string | null }[];
   };
-  canal: { platform: import("./etiquetas").Plataforma; display_name: string };
+  canal: { platform: import("./etiquetas").Plataforma; display_name: string; zernio_account_id: string };
 };
 
 export type Mensaje = {
@@ -102,7 +102,9 @@ export type Mensaje = {
   delivery_status: "pending" | "sent" | "delivered" | "read" | "failed";
   error_message: string | null;
   created_at: string;
-  adjuntos: { id: string; type: string; mime_type: string | null; url: string | null }[];
+  adjuntos: { id: string; type: string; mime_type: string | null; url: string | null; detected_kind: string | null }[];
+  /** Etapa que la IA detectó con este mensaje como evidencia. */
+  evidencia: { to_stage: import("./etiquetas").Etapa; confirmada: boolean } | null;
 };
 
 export async function listarMensajes(conversationId: string): Promise<Mensaje[]> {
@@ -111,13 +113,23 @@ export async function listarMensajes(conversationId: string): Promise<Mensaje[]>
     .from("messages")
     .select(
       "id, direction, sender_type, sender_profile_id, body, delivery_status, error_message, created_at, " +
-        "attachments(id, type, mime_type, storage_path)",
+        "attachments(id, type, mime_type, storage_path, detected_kind)",
     )
     .eq("conversation_id", conversationId)
     .order("created_at", { ascending: false })
     .limit(200)
-    .returns<(Omit<Mensaje, "adjuntos"> & { attachments: { id: string; type: string; mime_type: string | null; storage_path: string | null }[] })[]>();
+    .returns<
+      (Omit<Mensaje, "adjuntos" | "evidencia"> & {
+        attachments: { id: string; type: string; mime_type: string | null; storage_path: string | null; detected_kind: string | null }[];
+      })[]
+    >();
   if (error) throw error;
+
+  const ids = (data ?? []).map((m) => m.id);
+  const { data: eventos } = ids.length
+    ? await sb.from("stage_events").select("evidence_message_id, to_stage, confirmed_at").eq("source", "ai").in("evidence_message_id", ids)
+    : { data: [] };
+  const evid = new Map((eventos ?? []).map((e) => [e.evidence_message_id!, { to_stage: e.to_stage, confirmada: Boolean(e.confirmed_at) }]));
 
   const rutas = (data ?? []).flatMap((m) => m.attachments.map((a) => a.storage_path)).filter(Boolean) as string[];
   const firmadas = new Map<string, string>();
@@ -130,10 +142,12 @@ export async function listarMensajes(conversationId: string): Promise<Mensaje[]>
     .reverse()
     .map(({ attachments, ...m }) => ({
       ...m,
+      evidencia: evid.get(m.id) ?? null,
       adjuntos: attachments.map((a) => ({
         id: a.id,
         type: a.type,
         mime_type: a.mime_type,
+        detected_kind: a.detected_kind,
         url: a.storage_path ? firmadas.get(a.storage_path) ?? null : null,
       })),
     }));
@@ -152,7 +166,7 @@ export async function datosFicha(contactId: string, conversacionActual: string) 
       .returns<{ id: string; kind: "dm" | "comment"; last_message_at: string | null; canal: { platform: import("./etiquetas").Plataforma } }[]>(),
     sb
       .from("stage_events")
-      .select("id, from_stage, to_stage, source, created_at, created_by, confirmed_at")
+      .select("id, from_stage, to_stage, source, created_at, created_by, confirmed_at, note")
       .eq("contact_id", contactId)
       .order("created_at", { ascending: false })
       .limit(6),

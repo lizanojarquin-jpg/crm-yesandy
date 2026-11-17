@@ -10,8 +10,11 @@ import {
   privateReplyToComment,
   replyToComment,
   sendInboxMessage,
+  sendTemplate,
   ZernioError,
 } from "@/lib/zernio/client";
+import { contarVariables, cuerpo, plantillasDe, rellenar } from "@/lib/inbox/plantillas";
+import { clasificarMensaje } from "@/lib/ia/clasificador";
 import { ventanaMensajes } from "@/lib/inbox/ventana";
 import { ETAPAS, type Etapa } from "@/lib/inbox/etiquetas";
 
@@ -45,6 +48,8 @@ function explicar(e: unknown): string {
   if (e instanceof ZernioError) {
     const t = JSON.stringify(e.body ?? "");
     if (t.includes("TEMPLATE_REQUIRED")) return "WhatsApp pide una plantilla aprobada: pasaron más de 24 horas desde el último mensaje del cliente.";
+    if (t.includes("132001")) return "Meta no encontró esa plantilla (revisa el nombre y el idioma).";
+    if (t.includes("131047")) return "Pasaron más de 24 horas: solo se puede enviar una plantilla aprobada.";
     if (t.includes("privateReplyConsumed")) return "Ese comentario ya recibió su mensaje privado (Meta permite uno por comentario).";
     if (t.includes("attachment_fetch_failed")) return "La plataforma no pudo descargar la imagen. Intenta de nuevo.";
     if (e.status === 429) return "Demasiados mensajes seguidos. Espera un momento y vuelve a intentar.";
@@ -174,6 +179,58 @@ export async function enviar(conversationId: string, _prev: Estado, fd: FormData
   return { ok: true, mensaje: "Enviado", n: Date.now() };
 }
 
+/** Envía una plantilla aprobada de WhatsApp (para escribir fuera de las 24 h). */
+export async function enviarPlantilla(conversationId: string, _prev: Estado, fd: FormData): Promise<Estado> {
+  const usuario = await getUsuarioActual();
+  const conv = await cargar(conversationId);
+  if (!conv || conv.kind !== "dm" || conv.canal.platform !== "whatsapp") {
+    return { ok: false, mensaje: "Las plantillas solo se usan en WhatsApp." };
+  }
+  const nombre = String(fd.get("plantilla") ?? "");
+  const idioma = String(fd.get("idioma") ?? "");
+  const valores = fd.getAll("variable").map((v) => String(v).trim().slice(0, 500));
+  const idem = String(fd.get("idem") ?? "") || undefined;
+
+  // Se vuelve a comprobar en el servidor: que exista, esté aprobada y lleve todos los datos.
+  const p = (await plantillasDe(conv.canal.zernio_account_id)).find(
+    (x) => x.name === nombre && x.language === idioma && x.status === "APPROVED",
+  );
+  if (!p) return { ok: false, mensaje: "Esa plantilla no está aprobada." };
+  const texto = cuerpo(p);
+  const n = contarVariables(texto);
+  if (valores.length < n || valores.slice(0, n).some((v) => !v)) {
+    return { ok: false, mensaje: "Completa todos los datos de la plantilla." };
+  }
+
+  try {
+    const r = await sendTemplate(conv.external_conversation_id, {
+      accountId: conv.canal.zernio_account_id,
+      name: p.name,
+      language: p.language,
+      params: valores.slice(0, n),
+      idempotencyKey: idem,
+    });
+    const admin = createAdminClient();
+    const body = `📋 ${rellenar(texto, valores)}`;
+    if (r.messageId) {
+      await guardarSaliente(admin, conv.id, usuario.id, body, r.messageId);
+    } else {
+      await admin.from("messages").insert({
+        conversation_id: conv.id,
+        direction: "outbound",
+        sender_type: "agent",
+        sender_profile_id: usuario.id,
+        body,
+        delivery_status: "sent",
+      });
+    }
+  } catch (e) {
+    return { ok: false, mensaje: explicar(e) };
+  }
+  refresh();
+  return { ok: true, mensaje: "Plantilla enviada", n: Date.now() };
+}
+
 type Admin = ReturnType<typeof createAdminClient>;
 
 /**
@@ -206,6 +263,8 @@ async function guardarSaliente(
     .select("id")
     .single();
   if (error) throw error;
+  // "Voy a preparar tu pedido", guías, etc.: se revisa después de responder, sin hacer esperar.
+  if (data?.id) after(() => clasificarMensaje(data.id).catch((e) => console.error("clasificador", e)));
   return data?.id ?? null;
 }
 
