@@ -326,7 +326,18 @@ async function handleDelivery(e: MessageEvent): Promise<ProcessResult> {
     .in("external_message_id", ids)
     .neq("delivery_status", "read") // no retroceder de "leído" a "entregado"
     .select("id");
-  return data?.length ? { status: "ok" } : { status: "ignored", detail: "mensaje no encontrado" };
+  if (data?.length) return { status: "ok" };
+
+  // Lo que se envía desde Meta Business Suite o las apps a veces solo llega como
+  // "entregado"/"leído". Si el aviso trae el mensaje completo, se guarda igual.
+  const m = e.message;
+  if (!m?.direction || (!m.text && !m.attachments?.length)) {
+    return { status: "ignored", detail: "mensaje no encontrado" };
+  }
+  const r = await handleMessage(e);
+  if (r.status === "ignored") return r;
+  await db().from("messages").update({ delivery_status: status }).in("external_message_id", ids).neq("delivery_status", "read");
+  return { status: "ok", detail: "guardado desde aviso de entrega" };
 }
 
 async function handleComment(e: CommentEvent): Promise<ProcessResult> {
