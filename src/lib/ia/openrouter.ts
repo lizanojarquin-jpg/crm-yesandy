@@ -6,6 +6,66 @@ const URL_API = "https://openrouter.ai/api/v1/chat/completions";
 export type Parte = { type: "text"; text: string } | { type: "image_url"; image_url: { url: string } };
 export type MensajeIA = { role: "system" | "user" | "assistant"; content: string | Parte[] };
 
+export type LlamadaHerramienta = { id: string; type: "function"; function: { name: string; arguments: string } };
+export type MensajeChat =
+  | MensajeIA
+  | { role: "assistant"; content: string | null; tool_calls: LlamadaHerramienta[] }
+  | { role: "tool"; tool_call_id: string; content: string };
+export type Herramienta = {
+  type: "function";
+  function: { name: string; description: string; parameters: Record<string, unknown> };
+};
+
+/**
+ * Una vuelta de conversación con herramientas (function calling). El modelo está obligado
+ * a llamar alguna herramienta; quien llama ejecuta y vuelve a llamar con el resultado.
+ */
+export async function chatConHerramientas(p: {
+  model: string;
+  respaldo?: string[];
+  messages: MensajeChat[];
+  tools: Herramienta[];
+  temperature?: number;
+  maxTokens?: number;
+}): Promise<{ llamadas: LlamadaHerramienta[]; texto: string | null; costo: number | null }> {
+  const key = process.env.OPENROUTER_API_KEY;
+  if (!key) throw new Error("Falta OPENROUTER_API_KEY");
+  const llamar = () =>
+    fetch(URL_API, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${key}`,
+        "Content-Type": "application/json",
+        "HTTP-Referer": process.env.NEXT_PUBLIC_SITE_URL ?? "https://crm-yesandy.vercel.app",
+        "X-Title": "CRM Yesandy",
+      },
+      body: JSON.stringify({
+        models: [p.model, ...(p.respaldo ?? []).filter((m) => m !== p.model)],
+        messages: p.messages,
+        tools: p.tools,
+        tool_choice: "required",
+        temperature: p.temperature ?? 0.4,
+        max_tokens: p.maxTokens ?? 900,
+        usage: { include: true },
+      }),
+      cache: "no-store",
+      signal: AbortSignal.timeout(40_000),
+    });
+  let res = await llamar();
+  for (let intento = 1; intento <= 2 && (res.status === 429 || res.status >= 500); intento++) {
+    await new Promise((r) => setTimeout(r, 1500 * intento));
+    res = await llamar();
+  }
+  const body = await res.json().catch(() => null);
+  if (!res.ok) throw new Error(`OpenRouter ${res.status}: ${JSON.stringify(body?.error ?? body).slice(0, 300)}`);
+  const msg = body?.choices?.[0]?.message;
+  return {
+    llamadas: (msg?.tool_calls ?? []) as LlamadaHerramienta[],
+    texto: typeof msg?.content === "string" ? msg.content : null,
+    costo: body?.usage?.cost ?? null,
+  };
+}
+
 export async function completarJSON<T>(p: {
   model: string;
   respaldo?: string[];

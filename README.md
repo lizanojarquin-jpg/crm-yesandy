@@ -29,5 +29,8 @@ Stack: Next.js 16 (App Router, TypeScript, Tailwind) · Supabase (Auth, Postgres
 - `src/app/(app)/page.tsx` y `src/app/(app)/c/[id]/`: bandeja y conversación. Las piezas están en `src/app/(app)/_bandeja/`.
 - `src/lib/inbox/`: consultas (con RLS), filtros, etiquetas en español y la regla de las 24 h (`ventana.ts`).
 - `src/lib/zernio/`: cliente de la API, firma del webhook y guardado de eventos (`ingest.ts`).
+- `src/lib/ia/clasificador.ts`: seguimiento automático (pedido, pago, envío y entrega detectados en la conversación).
+- `src/lib/ia/asesora.ts`: asesora IA. Contesta mensajes directos según el modo de Configuración (apagada, solo pruebas o encendida), busca en el catálogo (`catalogo.ts`, copia de shop.yesandycr.com) y pasa a vendedora. Cada decisión queda en la tabla `ai_runs`.
+- `scripts/probar-asesora.mts` y `scripts/prueba-asesora-flujo.mts`: pruebas de la asesora (no le escriben a nadie).
 - `scripts/reprocesar-eventos.mts`: vuelve a procesar eventos del webhook que quedaron ignorados.
 - `scripts/crear-usuarios.mjs`: alta de usuarios del equipo.

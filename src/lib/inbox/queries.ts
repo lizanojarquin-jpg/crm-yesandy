@@ -10,7 +10,7 @@ export async function listarConversaciones(f: Filtros, usuarioId: string) {
   let q = sb
     .from("conversations")
     .select(
-      "id, kind, status, unread_count, last_message_at, last_message_preview, assigned_to, " +
+      "id, kind, status, unread_count, last_message_at, last_message_preview, assigned_to, ai_mode, " +
         "contacto:contacts!inner(id, name, phone, stage, stage_pending_review, contact_identities(handle)), " +
         "canal:channel_accounts!inner(platform)",
     )
@@ -35,6 +35,7 @@ export type ConversacionLista = {
   last_message_at: string | null;
   last_message_preview: string | null;
   assigned_to: string | null;
+  ai_mode: "on" | "off" | "handoff";
   contacto: {
     id: string;
     name: string | null;
@@ -57,7 +58,7 @@ export async function obtenerConversacion(id: string) {
   const { data, error } = await sb
     .from("conversations")
     .select(
-      "id, kind, status, unread_count, assigned_to, external_conversation_id, external_post_id, post_permalink, last_inbound_at, contact_id, " +
+      "id, kind, status, unread_count, assigned_to, ai_mode, external_conversation_id, external_post_id, post_permalink, last_inbound_at, contact_id, " +
         "contacto:contacts(id, name, phone, stage, stage_pending_review, notes, follow_up_at, loss_reason, contact_identities(platform, handle)), " +
         "canal:channel_accounts(platform, display_name, zernio_account_id)",
     )
@@ -78,6 +79,7 @@ export type ConversacionDetalle = {
   external_post_id: string | null;
   post_permalink: string | null;
   last_inbound_at: string | null;
+  ai_mode: "on" | "off" | "handoff";
   contact_id: string;
   contacto: {
     id: string;
@@ -113,14 +115,14 @@ export async function listarMensajes(conversationId: string): Promise<Mensaje[]>
     .from("messages")
     .select(
       "id, direction, sender_type, sender_profile_id, body, delivery_status, error_message, created_at, " +
-        "attachments(id, type, mime_type, storage_path, detected_kind)",
+        "attachments(id, type, mime_type, storage_path, external_url, detected_kind)",
     )
     .eq("conversation_id", conversationId)
     .order("created_at", { ascending: false })
     .limit(200)
     .returns<
       (Omit<Mensaje, "adjuntos" | "evidencia"> & {
-        attachments: { id: string; type: string; mime_type: string | null; storage_path: string | null; detected_kind: string | null }[];
+        attachments: { id: string; type: string; mime_type: string | null; storage_path: string | null; external_url: string | null; detected_kind: string | null }[];
       })[]
     >();
   if (error) throw error;
@@ -148,7 +150,12 @@ export async function listarMensajes(conversationId: string): Promise<Mensaje[]>
         type: a.type,
         mime_type: a.mime_type,
         detected_kind: a.detected_kind,
-        url: a.storage_path ? firmadas.get(a.storage_path) ?? null : null,
+        // Las fotos del catálogo que envía la IA se muestran desde la tienda (son públicas).
+        url: a.storage_path
+          ? firmadas.get(a.storage_path) ?? null
+          : a.external_url?.startsWith("https://shop.yesandycr.com/")
+            ? a.external_url
+            : null,
       })),
     }));
 }
@@ -172,4 +179,25 @@ export async function datosFicha(contactId: string, conversacionActual: string) 
       .limit(6),
   ]);
   return { otras: convs.data ?? [], etapas: etapas.data ?? [] };
+}
+
+export type Traspaso = {
+  id: string;
+  reason: string;
+  summary: Partial<Record<"para_quien" | "ocasion" | "fecha" | "estilo" | "talla" | "prendas" | "dudas", string>>;
+  created_at: string;
+};
+
+/** Último traspaso de la IA que nadie ha tomado en esta conversación. */
+export async function traspasoAbierto(conversationId: string): Promise<Traspaso | null> {
+  const sb = await createClient();
+  const { data } = await sb
+    .from("ai_handoffs")
+    .select("id, reason, summary, created_at")
+    .eq("conversation_id", conversationId)
+    .is("taken_by", null)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  return (data as Traspaso | null) ?? null;
 }

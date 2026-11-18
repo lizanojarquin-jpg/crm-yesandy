@@ -109,6 +109,7 @@ export async function ListaConversaciones({
                       {c.kind === "comment" && <Chip>Comentario</Chip>}
                       <Chip tono={c.contacto.stage === "new" ? "neutro" : "acento"}>{textoEtapa(c.contacto.stage)}</Chip>
                       {c.contacto.stage_pending_review && <Chip tono="aviso">Por confirmar</Chip>}
+                      {c.ai_mode === "handoff" && !c.assigned_to && <Chip tono="aviso">La IA la pasó</Chip>}
                       {atiende && <span className="text-[11px] text-muted">Atiende {atiende}</span>}
                     </div>
                   </div>

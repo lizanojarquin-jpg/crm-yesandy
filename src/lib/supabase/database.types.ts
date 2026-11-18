@@ -12,6 +12,31 @@ export type Database = {
   __InternalSupabase: {
     PostgrestVersion: "14.18"
   }
+  graphql_public: {
+    Tables: {
+      [_ in never]: never
+    }
+    Views: {
+      [_ in never]: never
+    }
+    Functions: {
+      graphql: {
+        Args: {
+          extensions?: Json
+          operationName?: string
+          query?: string
+          variables?: Json
+        }
+        Returns: Json
+      }
+    }
+    Enums: {
+      [_ in never]: never
+    }
+    CompositeTypes: {
+      [_ in never]: never
+    }
+  }
   public: {
     Tables: {
       ai_handoffs: {
@@ -55,6 +80,54 @@ export type Database = {
             columns: ["taken_by"]
             isOneToOne: false
             referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      ai_runs: {
+        Row: {
+          conversation_id: string
+          cost_usd: number | null
+          created_at: string
+          detail: string | null
+          finished_at: string | null
+          id: string
+          status: string
+          trigger_message_id: string
+        }
+        Insert: {
+          conversation_id: string
+          cost_usd?: number | null
+          created_at?: string
+          detail?: string | null
+          finished_at?: string | null
+          id?: string
+          status?: string
+          trigger_message_id: string
+        }
+        Update: {
+          conversation_id?: string
+          cost_usd?: number | null
+          created_at?: string
+          detail?: string | null
+          finished_at?: string | null
+          id?: string
+          status?: string
+          trigger_message_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ai_runs_conversation_id_fkey"
+            columns: ["conversation_id"]
+            isOneToOne: false
+            referencedRelation: "conversations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "ai_runs_trigger_message_id_fkey"
+            columns: ["trigger_message_id"]
+            isOneToOne: true
+            referencedRelation: "messages"
             referencedColumns: ["id"]
           },
         ]
@@ -791,6 +864,9 @@ export type CompositeTypes<
     : never
 
 export const Constants = {
+  graphql_public: {
+    Enums: {},
+  },
   public: {
     Enums: {
       ai_mode: ["on", "off", "handoff"],

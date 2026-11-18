@@ -62,18 +62,74 @@ export default async function SeguimientoPage() {
   const motivo = new Map<string, string>();
   for (const n of notas ?? []) if (n.note && !motivo.has(n.contact_id)) motivo.set(n.contact_id, n.note);
 
-  const nada = !pendientes.length && !paraHoy.data?.length && !proximos.data?.length && !enCurso.data?.length;
+  // Conversaciones que la asesora IA pasó a vendedora y nadie ha tomado.
+  const { data: traspasos } = await sb
+    .from("ai_handoffs")
+    .select(
+      "id, reason, summary, created_at, conversacion:conversations!inner(id, contacto:contacts!inner(name, phone, contact_identities(handle)), canal:channel_accounts!inner(platform))",
+    )
+    .is("taken_by", null)
+    .order("created_at", { ascending: false })
+    .limit(50)
+    .returns<
+      {
+        id: string;
+        reason: string;
+        summary: { prendas?: string; talla?: string; ocasion?: string };
+        created_at: string;
+        conversacion: {
+          id: string;
+          contacto: { name: string | null; phone: string | null; contact_identities: { handle: string | null }[] };
+          canal: { platform: Plataforma };
+        };
+      }[]
+    >();
+
+  const nada =
+    !traspasos?.length && !pendientes.length && !paraHoy.data?.length && !proximos.data?.length && !enCurso.data?.length;
 
   return (
     <div className="mx-auto max-w-3xl px-4 py-6">
       <h1 className="text-xl font-semibold">Seguimiento</h1>
-      <p className="text-sm text-muted">Lo que detectó la IA, a quién escribirle hoy y los pedidos en curso.</p>
+      <p className="text-sm text-muted">Lo que pasó o detectó la IA, a quién escribirle hoy y los pedidos en curso.</p>
 
       {nada && (
         <EmptyState
           titulo="Sin clientes en seguimiento"
           descripcion="Cuando la IA detecte un pedido, un comprobante o una guía, o cuando pongas una fecha de seguimiento en la ficha, aparecen aquí."
         />
+      )}
+
+      {traspasos && traspasos.length > 0 && (
+        <section className="mt-6">
+          <div className="mb-2 flex items-baseline gap-2">
+            <h2 className="text-sm font-semibold tracking-wide text-muted uppercase">La IA pasó a vendedora</h2>
+            <span className="text-xs text-muted">{traspasos.length}</span>
+          </div>
+          <p className="mb-2 text-xs text-muted">Clientes que la asesora IA dejó listos para confirmar talla, color y precio.</p>
+          <ul className="overflow-hidden rounded-xl border border-border bg-surface">
+            {traspasos.map((t) => {
+              const c = t.conversacion;
+              const nombre = nombreContacto(c.contacto, c.contacto.contact_identities[0]?.handle);
+              const extra = [t.summary?.prendas, t.summary?.talla && `talla ${t.summary.talla}`, t.summary?.ocasion].filter(Boolean).join(" · ");
+              return (
+                <li key={t.id} className="flex gap-3 border-b border-border/70 px-4 py-3 last:border-b-0">
+                  <Avatar nombre={nombre} canal={c.canal.platform} />
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-baseline gap-2">
+                      <Link href={`/c/${c.id}`} className="truncate font-medium hover:underline">
+                        {nombre}
+                      </Link>
+                      <span className="ml-auto shrink-0 text-xs text-muted">{horaCorta(t.created_at)}</span>
+                    </div>
+                    <p className="text-xs text-muted">{t.reason}</p>
+                    {extra && <p className="text-xs text-muted italic">{extra}</p>}
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        </section>
       )}
 
       <Seccion titulo="Por confirmar" ayuda="La IA movió la etapa. Revisa la conversación y confirma." filas={pendientes}>

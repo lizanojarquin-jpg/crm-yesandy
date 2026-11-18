@@ -2,7 +2,10 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getUsuarioActual } from "@/lib/auth";
 import { conQs, leerFiltros, qs } from "@/lib/inbox/filtros";
-import { listarEquipo, listarMensajes, obtenerConversacion } from "@/lib/inbox/queries";
+import { listarEquipo, listarMensajes, obtenerConversacion, traspasoAbierto } from "@/lib/inbox/queries";
+import { leerAjustesIA } from "@/lib/ia/asesora";
+import { AvisoTraspaso } from "../../_bandeja/conversacion/traspaso";
+import { ControlIA } from "../../_bandeja/conversacion/control-ia";
 import { nombreContacto, plataforma } from "@/lib/inbox/etiquetas";
 import { ventanaMensajes } from "@/lib/inbox/ventana";
 import { plantillasUsables } from "@/lib/inbox/plantillas";
@@ -35,7 +38,12 @@ export default async function ConversacionPage({
 
   const conv = await obtenerConversacion(id);
   if (!conv) notFound();
-  const [mensajes, equipo] = await Promise.all([listarMensajes(id), listarEquipo()]);
+  const [mensajes, equipo, traspaso, ajustesIA] = await Promise.all([
+    listarMensajes(id),
+    listarEquipo(),
+    traspasoAbierto(id),
+    leerAjustesIA(),
+  ]);
   const nombres = new Map(equipo.map((p) => [p.id, p.display_name]));
 
   const nombre = nombreContacto(conv.contacto, conv.contacto.contact_identities[0]?.handle);
@@ -96,6 +104,7 @@ export default async function ConversacionPage({
           Ver la publicación en {canal.texto} ↗
         </a>
       )}
+      {traspaso && <AvisoTraspaso traspaso={traspaso} />}
       <Desplazador key={conv.id}>
         <Mensajes mensajes={mensajes} nombres={nombres} />
       </Desplazador>
@@ -122,7 +131,23 @@ export default async function ConversacionPage({
         }
         ficha={
           <>
-            <Ficha conv={conv} equipo={equipo} nombres={nombres} q={q} />
+            <Ficha
+              conv={conv}
+              equipo={equipo}
+              nombres={nombres}
+              q={q}
+              controlIA={
+                <ControlIA
+                  conversationId={conv.id}
+                  contactId={conv.contacto.id}
+                  esComentario={esComentario}
+                  aiMode={conv.ai_mode}
+                  modoGlobal={ajustesIA.modo}
+                  esPrueba={ajustesIA.contactosPrueba.includes(conv.contacto.id)}
+                  esAdmin={usuario.rol === "admin"}
+                />
+              }
+            />
             <form
               action={cambiarEstado.bind(null, conv.id, conv.status === "open" ? "closed" : "open")}
               className="border-t border-border p-4 sm:hidden"

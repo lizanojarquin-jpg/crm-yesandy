@@ -13,11 +13,13 @@ export async function Ficha({
   equipo,
   nombres,
   q,
+  controlIA,
 }: {
   conv: ConversacionDetalle;
   equipo: { id: string; display_name: string }[];
   nombres: Map<string, string>;
   q: string;
+  controlIA?: React.ReactNode;
 }) {
   const c = conv.contacto;
   const { otras, etapas } = await datosFicha(c.id, conv.id);
@@ -52,6 +54,8 @@ export async function Ficha({
         )}
         <AsignarSelector conversationId={conv.id} asignada={conv.assigned_to} equipo={equipo} />
       </section>
+
+      {controlIA}
 
       <section>
         <DatosContactoForm

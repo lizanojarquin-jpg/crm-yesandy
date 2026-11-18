@@ -3,7 +3,8 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { verifyZernioSignature } from "@/lib/zernio/signature";
 import { processZernioEvent } from "@/lib/zernio/ingest";
 
-export const maxDuration = 60;
+// La asesora IA espera unos segundos por si el cliente sigue escribiendo y luego piensa y envía.
+export const maxDuration = 120;
 
 // Webhook de Zernio. Flujo:
 // 1. Valida la firma HMAC del cuerpo crudo (si no coincide: 401, no se guarda nada).

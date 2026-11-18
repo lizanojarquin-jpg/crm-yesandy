@@ -2,7 +2,7 @@
 
 import { after } from "next/server";
 import { refresh } from "next/cache";
-import { getUsuarioActual } from "@/lib/auth";
+import { getUsuarioActual, requireAdmin } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import {
@@ -175,6 +175,8 @@ export async function enviar(conversationId: string, _prev: Estado, fd: FormData
     return { ok: false, mensaje: explicar(e) };
   }
 
+  // Si la IA había pasado la conversación, quien responde la atiende.
+  await tomarTraspasos(conv.id, usuario.id);
   refresh();
   return { ok: true, mensaje: "Enviado", n: Date.now() };
 }
@@ -303,7 +305,39 @@ export async function asignar(conversationId: string, perfilId: string | null) {
 
 export async function tomar(conversationId: string) {
   const usuario = await getUsuarioActual();
+  await tomarTraspasos(conversationId, usuario.id);
   await asignar(conversationId, usuario.id);
+}
+
+/** Marca como atendidos los traspasos abiertos de la IA en esta conversación. */
+async function tomarTraspasos(conversationId: string, perfilId: string) {
+  const sb = await createClient();
+  await sb
+    .from("ai_handoffs")
+    .update({ taken_by: perfilId, taken_at: new Date().toISOString() })
+    .eq("conversation_id", conversationId)
+    .is("taken_by", null);
+}
+
+/** Enciende o apaga la asesora IA en una conversación. */
+export async function cambiarIAConversacion(conversationId: string, modo: "on" | "off") {
+  await getUsuarioActual();
+  const sb = await createClient();
+  await sb.from("conversations").update({ ai_mode: modo }).eq("id", conversationId);
+  refresh();
+}
+
+/** (Admin) Marca o desmarca un contacto para probar la IA en modo "Solo pruebas". */
+export async function alternarContactoPrueba(contactId: string) {
+  const usuario = await requireAdmin();
+  const admin = createAdminClient();
+  const { data } = await admin.from("app_settings").select("value").eq("key", "ai_contactos_prueba").maybeSingle();
+  const lista = Array.isArray(data?.value) ? data.value.map(String) : [];
+  const nueva = lista.includes(contactId) ? lista.filter((x) => x !== contactId) : [...lista, contactId];
+  await admin
+    .from("app_settings")
+    .upsert({ key: "ai_contactos_prueba", value: nueva, updated_by: usuario.id }, { onConflict: "key" });
+  refresh();
 }
 
 export async function cambiarEstado(conversationId: string, estado: "open" | "closed") {
