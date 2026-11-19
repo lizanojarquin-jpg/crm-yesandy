@@ -31,7 +31,22 @@ const casos: { nombre: string; canal?: "whatsapp" | "instagram" | "facebook"; et
   {
     nombre: "Envíos",
     turnos: [cli("Hola hacen envíos a Cartago?")],
-    espera: "pasa a vendedora (envíos pendiente)",
+    espera: "explica opciones y pide provincia, cantón, distrito y señas, sin pasar todavía",
+  },
+  {
+    nombre: "Envíos con ubicación → traspaso",
+    etapa: "advising",
+    turnos: [
+      cli("Hola hacen envíos a Cartago?"),
+      ia("¡Hola! Sí hacemos envíos. Para cotizarte, ¿me indicas provincia, cantón, distrito y otras señas?"),
+      cli("Cartago, Paraíso, Llanos de Santa Lucía, frente a la escuela"),
+    ],
+    espera: "pasa a vendedora para cotizar, sin inventar precio",
+  },
+  {
+    nombre: "Cuánto tarda",
+    turnos: [cli("Si pago hoy cuándo me llega?")],
+    espera: "dice que normalmente sale al día siguiente de confirmar el pago",
   },
   {
     nombre: "Horario domingo",
