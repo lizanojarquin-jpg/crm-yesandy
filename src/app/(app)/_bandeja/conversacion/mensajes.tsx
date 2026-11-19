@@ -2,6 +2,7 @@ import { Fragment } from "react";
 import type { Mensaje } from "@/lib/inbox/queries";
 import { claveDia, encabezadoDia, hora } from "@/lib/formato";
 import { textoEtapa } from "@/lib/inbox/etiquetas";
+import { BotonCorregir } from "../../entrenar/corregir-form";
 
 export function Mensajes({ mensajes, nombres }: { mensajes: Mensaje[]; nombres: Map<string, string> }) {
   if (!mensajes.length) {
@@ -18,10 +19,24 @@ export function Mensajes({ mensajes, nombres }: { mensajes: Mensaje[]; nombres: 
             </span>
           </div>
         )}
-        <Burbuja m={m} nombres={nombres} />
+        <Burbuja m={m} nombres={nombres} situacion={m.sender_type === "ai" ? ultimoDelCliente(mensajes, i) : ""} />
       </Fragment>
     );
   });
+}
+
+/** Lo último que escribió el cliente antes de la respuesta de la IA (para la corrección). */
+function ultimoDelCliente(mensajes: Mensaje[], hasta: number) {
+  const partes: string[] = [];
+  for (let i = hasta - 1; i >= 0 && partes.length < 3; i--) {
+    const m = mensajes[i];
+    if (m.direction !== "inbound") {
+      if (partes.length) break;
+      continue;
+    }
+    partes.unshift(m.body?.trim() || (m.adjuntos.length ? "[foto]" : ""));
+  }
+  return partes.filter(Boolean).join(" / ");
 }
 
 function autor(m: Mensaje, nombres: Map<string, string>) {
@@ -31,7 +46,7 @@ function autor(m: Mensaje, nombres: Map<string, string>) {
   return "Desde la app";
 }
 
-function Burbuja({ m, nombres }: { m: Mensaje; nombres: Map<string, string> }) {
+function Burbuja({ m, nombres, situacion }: { m: Mensaje; nombres: Map<string, string>; situacion: string }) {
   const sale = m.direction === "outbound";
   const quien = autor(m, nombres);
   return (
@@ -65,6 +80,7 @@ function Burbuja({ m, nombres }: { m: Mensaje; nombres: Map<string, string> }) {
           {m.evidencia.confirmada ? " · confirmado" : " · por confirmar"}
         </p>
       )}
+      {m.sender_type === "ai" && m.body && !m.adjuntos.length && <BotonCorregir situacion={situacion} original={m.body} messageId={m.id} />}
       {m.delivery_status === "failed" && (
         <p className="mt-0.5 text-xs text-danger">No se entregó{m.error_message ? `: ${m.error_message}` : ""}</p>
       )}

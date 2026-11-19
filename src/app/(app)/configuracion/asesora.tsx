@@ -4,7 +4,6 @@ import { Chip } from "@/components/ui/chip";
 import { leerAjustesIA, type ModoIA } from "@/lib/ia/asesora";
 import { fechaLarga, horaCorta } from "@/lib/formato";
 import { cambiarModoIA, sincronizarCatalogoAccion } from "./ia-actions";
-import { ConocimientoForm } from "./conocimiento-form";
 
 const MODOS: { valor: ModoIA; titulo: string; ayuda: string }[] = [
   { valor: "apagada", titulo: "Apagada", ayuda: "No responde a nadie." },
@@ -23,11 +22,10 @@ const ESTADO_RUN: Record<string, string> = {
 export async function Asesora() {
   const db = createAdminClient();
   const inicioHoy = new Date(new Date().toLocaleDateString("en-CA", { timeZone: "America/Costa_Rica" }) + "T00:00:00-06:00").toISOString();
-  const [ajustes, catalogo, ultimoSync, conocimiento, hoy, ultimos] = await Promise.all([
+  const [ajustes, catalogo, ultimoSync, hoy, ultimos] = await Promise.all([
     leerAjustesIA(),
     db.from("catalog_items").select("id", { count: "exact", head: true }).eq("active", true),
     db.from("catalog_items").select("synced_at").order("synced_at", { ascending: false }).limit(1).maybeSingle(),
-    db.from("business_knowledge").select("key, title, content").order("sort_order"),
     db.from("ai_runs").select("status, cost_usd").gte("created_at", inicioHoy),
     db
       .from("ai_runs")
@@ -104,14 +102,15 @@ export async function Asesora() {
         </form>
       </Card>
 
-      <Card className="flex flex-col gap-4">
-        <div>
-          <p className="font-medium">Lo que la IA sabe del negocio</p>
-          <p className="text-sm text-muted">La IA solo responde con esto. Lo que no esté aquí lo pasa a una vendedora.</p>
-        </div>
-        {(conocimiento.data ?? []).map((k) => (
-          <ConocimientoForm key={k.key} clave={k.key} titulo={k.title} contenido={k.content} />
-        ))}
+      <Card className="flex flex-col gap-1">
+        <p className="font-medium">Enseñarle</p>
+        <p className="text-sm text-muted">
+          La información del negocio, las reglas y las correcciones están en{" "}
+          <a href="/entrenar" className="font-medium text-accent hover:underline">
+            Entrenar IA
+          </a>
+          , donde también se puede practicar con ella.
+        </p>
       </Card>
     </div>
   );

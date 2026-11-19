@@ -9,6 +9,7 @@ import { createClient } from "@supabase/supabase-js";
 const DOMINIO_INTERNO = "crm.yesandycr.com";
 const EQUIPO = [
   { nombre: "Admin", rol: "admin" },
+  { nombre: "Jefe", rol: "admin" },
   { nombre: "Ventas 1", rol: "seller" },
   { nombre: "Ventas 2", rol: "seller" },
   { nombre: "Ventas 3", rol: "seller" },

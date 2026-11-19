@@ -54,7 +54,54 @@ export function estadoTienda(ahora = new Date()) {
 // ---------------------------------------------------------------------
 // Instrucciones
 // ---------------------------------------------------------------------
-function instrucciones(c: { canal: string; nombre: string | null; etapa: string; conocimiento: string; ahora: Date }) {
+export type Leccion = {
+  kind: "regla" | "correccion";
+  situation: string | null;
+  original_reply: string | null;
+  content: string;
+  reason: string | null;
+};
+
+/** Reglas y correcciones del equipo, en el formato que lee la IA. */
+function seccionLecciones(lecciones: Leccion[]): string {
+  const reglas = lecciones.filter((l) => l.kind === "regla");
+  const correcciones = lecciones.filter((l) => l.kind === "correccion").slice(0, 40);
+  if (!reglas.length && !correcciones.length) return "";
+  const partes = [
+    "\n\nLO QUE TE ENSEÑÓ EL EQUIPO\nSi algo de aquí contradice las instrucciones de arriba, sigue lo que enseñó el equipo.",
+  ];
+  if (reglas.length) partes.push(`Reglas:\n${reglas.map((r) => `- ${r.content}${r.reason ? ` (${r.reason})` : ""}`).join("\n")}`);
+  if (correcciones.length) {
+    partes.push(
+      "Correcciones (aprende el criterio y aplícalo en casos parecidos; no copies palabra por palabra):\n" +
+        correcciones
+          .map((c) =>
+            [
+              c.situation ? `- Cliente: "${c.situation}"` : "- En una conversación",
+              c.original_reply ? `  No respondas así: "${c.original_reply}"` : null,
+              `  Responde algo como: "${c.content}"`,
+              c.reason ? `  Por qué: ${c.reason}` : null,
+            ]
+              .filter(Boolean)
+              .join("\n"),
+          )
+          .join("\n"),
+    );
+  }
+  return partes.join("\n\n");
+}
+
+export async function leerLecciones(incluirPropuestas = false): Promise<Leccion[]> {
+  const { data } = await createAdminClient()
+    .from("ai_lessons")
+    .select("kind, situation, original_reply, content, reason")
+    .in("status", incluirPropuestas ? ["activa", "propuesta"] : ["activa"])
+    .order("created_at", { ascending: false })
+    .limit(150);
+  return (data ?? []) as Leccion[];
+}
+
+function instrucciones(c: { canal: string; nombre: string | null; etapa: string; conocimiento: string; lecciones: Leccion[]; ahora: Date }) {
   const t = estadoTienda(c.ahora);
   return `Eres la asistente virtual de Almacén Yesandy, una tienda en San Rafael de Heredia, Costa Rica. Atiendes a clientes por ${c.canal}. Vendemos ropa para toda la familia (dama, caballero, niños y navideña), calzado, artículos para el hogar y fragancias.
 
@@ -85,7 +132,7 @@ Horario, ubicación, métodos de pago (y preguntas por cuál le gustaría pagar)
 
 CUÁNDO PASAS A UNA ASESORA (pasar_a_vendedora = true)
 - Quiere precio, talla, color, existencias, apartar o comprar algo.
-- Pregunta por envíos, cambios, devoluciones, garantía o factura.
+- Pregunta por envíos, cambios, devoluciones, garantía o factura y la información del negocio no lo responde. Si lo responde, explícalo; para cotizar un envío pide primero la ubicación exacta y después pasa a una asesora.
 - Tiene una queja, un problema con un pedido o ya está pagando.
 - Manda un video o algo que no entiendes, o pide hablar con una persona.
 - No sabes la respuesta.
@@ -99,7 +146,7 @@ HERRAMIENTAS
 INFORMACIÓN DEL NEGOCIO
 ${c.conocimiento}
 
-Categorías del catálogo: ${Object.entries(CATEGORIAS).map(([id, n]) => `${id} (${n})`).join(", ")}.
+Categorías del catálogo: ${Object.entries(CATEGORIAS).map(([id, n]) => `${id} (${n})`).join(", ")}.${seccionLecciones(c.lecciones)}
 
 AHORA
 ${t.texto}. La tienda está ${t.abierta ? "abierta" : `cerrada; abre ${t.proxima}`}.
@@ -245,15 +292,26 @@ export async function pensar(p: {
   nombre: string | null;
   etapa: string;
   conocimiento?: string;
+  lecciones?: Leccion[];
   ahora?: Date;
 }): Promise<Decision> {
-  const conocimiento = p.conocimiento ?? (await leerConocimiento());
+  const [conocimiento, lecciones] = await Promise.all([
+    p.conocimiento ?? leerConocimiento(),
+    p.lecciones ?? leerLecciones(),
+  ]);
   const catalogo = await productosActivos();
   const porId = new Map(catalogo.map((x) => [x.external_id, x]));
   const messages: MensajeChat[] = [
     {
       role: "system",
-      content: instrucciones({ canal: CANAL[p.canal], nombre: p.nombre, etapa: p.etapa, conocimiento, ahora: p.ahora ?? new Date() }),
+      content: instrucciones({
+        canal: CANAL[p.canal],
+        nombre: p.nombre,
+        etapa: p.etapa,
+        conocimiento,
+        lecciones,
+        ahora: p.ahora ?? new Date(),
+      }),
     },
     ...armarHistorial(p.turnos),
   ];

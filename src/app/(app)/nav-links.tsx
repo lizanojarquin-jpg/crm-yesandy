@@ -6,6 +6,7 @@ import { usePathname } from "next/navigation";
 const ITEMS = [
   { href: "/", label: "Bandeja", icono: IconoBandeja, soloAdmin: false },
   { href: "/seguimiento", label: "Seguimiento", icono: IconoSeguimiento, soloAdmin: false },
+  { href: "/entrenar", label: "Entrenar IA", icono: IconoEntrenar, soloAdmin: false },
   { href: "/configuracion", label: "Configuración", icono: IconoAjustes, soloAdmin: true },
 ];
 
@@ -72,6 +73,14 @@ function IconoSeguimiento() {
     <svg {...svg}>
       <path d="M9 11l3 3 8-8" />
       <path d="M20 12v7a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h9" />
+    </svg>
+  );
+}
+function IconoEntrenar() {
+  return (
+    <svg {...svg}>
+      <path d="M12 3l1.8 4.6L18.5 9l-4.7 1.5L12 15l-1.8-4.5L5.5 9l4.7-1.4L12 3Z" />
+      <path d="M18 15l.8 2.2L21 18l-2.2.8L18 21l-.8-2.2L15 18l2.2-.8L18 15Z" />
     </svg>
   );
 }
