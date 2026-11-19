@@ -66,6 +66,30 @@ export async function chatConHerramientas(p: {
   };
 }
 
+/**
+ * Rescata un JSON cortado o lleno de saltos de línea repetidos
+ * (p. ej. {"etapa": "ninguna", "motivo": "La tienda envía\n\n\n\n…).
+ */
+export function repararJSON(texto: string): unknown | null {
+  const limpiar = (s: string) =>
+    s
+      .replace(/(?:\\n|\\r|\\t|\s){3,}/g, " ") // rachas de saltos de línea o espacios
+      .replace(/\\+$/, "") // escape a medias al final
+      .trimEnd();
+  // Primero hasta la última llave (texto alrededor); si no cierra, desde la primera llave hasta el final.
+  const candidatos = [texto.match(/\{[\s\S]*\}/)?.[0], texto.match(/\{[\s\S]*/)?.[0]].filter((x): x is string => Boolean(x));
+  for (const c of candidatos) {
+    const s = limpiar(c);
+    for (const cierre of ["", '"}', "}", '"]}', "]}"]) {
+      try {
+        const v = JSON.parse(s + cierre);
+        if (v && typeof v === "object") return v;
+      } catch {}
+    }
+  }
+  return null;
+}
+
 export async function completarJSON<T>(p: {
   model: string;
   respaldo?: string[];
@@ -114,6 +138,9 @@ export async function completarJSON<T>(p: {
     if (!json) throw new Error("sin JSON");
     return { datos: JSON.parse(json) as T, costo: body?.usage?.cost ?? null };
   } catch {
+    // A veces el modelo repite saltos de línea hasta cortarse: se intenta rescatar el JSON.
+    const rescatado = repararJSON(texto);
+    if (rescatado) return { datos: rescatado as T, costo: body?.usage?.cost ?? null };
     // Respuesta dañada: se repite una vez con el modelo de respaldo.
     if (p.respaldo?.length && !p.esReintento) {
       return completarJSON<T>({ ...p, model: p.respaldo[0], respaldo: [], esReintento: true });

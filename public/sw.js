@@ -17,9 +17,13 @@ self.addEventListener("push", (event) => {
       body: data.cuerpo || "",
       icon: "/icon-192.png",
       badge: "/badge-96.png",
-      // Mismo "tag" = reemplaza el aviso anterior de esa conversación en vez de amontonarlos.
+      // Mismo "tag" = reemplaza el aviso anterior de esa conversación en vez de amontonarlos,
+      // pero vuelve a sonar y vibrar (renotify).
       tag: data.tag || undefined,
       renotify: Boolean(data.tag),
+      silent: false,
+      vibrate: [250, 120, 250, 120, 250],
+      timestamp: Date.now(),
       data: { url: data.url || "/" },
     }),
   );
