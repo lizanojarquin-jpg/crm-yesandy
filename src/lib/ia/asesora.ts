@@ -3,6 +3,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { sendInboxMessage } from "@/lib/zernio/client";
 import { chatConHerramientas, type Herramienta, type MensajeChat, type Parte } from "./openrouter";
 import { buscarProductos, CATEGORIAS, productosActivos, type Producto } from "./catalogo";
+import { avisarTraspaso } from "@/lib/push";
 
 // Asesora IA (Fase 6): contesta primero en los mensajes directos como asesora, no como
 // vendedora. Propone prendas del catálogo y pasa a una persona para talla, color y precio.
@@ -581,6 +582,7 @@ async function traspasar(conv: Conv, motivo: string, resumen: Resumen) {
   const db = createAdminClient();
   await db.from("ai_handoffs").insert({ conversation_id: conv.id, reason: motivo, summary: resumen });
   await db.from("conversations").update({ ai_mode: "handoff" }).eq("id", conv.id);
+  await avisarTraspaso(conv.id, motivo).catch((e) => console.error("aviso traspaso", e));
   if (ORDEN.indexOf(conv.contacto.stage) < ORDEN.indexOf("ready_for_seller")) {
     await db.from("stage_events").insert({
       contact_id: conv.contacto.id,

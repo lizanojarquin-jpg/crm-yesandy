@@ -2,6 +2,7 @@ import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
 import type { Etapa } from "@/lib/inbox/etiquetas";
 import { completarJSON, type Parte } from "./openrouter";
+import { avisarPago } from "@/lib/push";
 
 // ---------------------------------------------------------------------
 // Detecta en qué etapa va la venta a partir de cada mensaje (texto e imágenes).
@@ -161,5 +162,8 @@ export async function clasificarMensaje(messageId: string, { soloProbar = false 
     note: c.motivo.slice(0, 300),
   });
   if (error) throw error;
+  if (c.etapa === "payment_received") {
+    await avisarPago(m.conversation_id, c.motivo).catch((e) => console.error("aviso pago", e));
+  }
   return { estado: "movido", clasificacion: c, costo };
 }

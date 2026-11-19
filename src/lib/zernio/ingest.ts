@@ -10,6 +10,7 @@ import {
 } from "./client";
 import { clasificarMensaje } from "@/lib/ia/clasificador";
 import { responderConIA } from "@/lib/ia/asesora";
+import { avisarMensajeNuevo } from "@/lib/push";
 
 type Platform = Database["public"]["Enums"]["channel_platform"];
 type AttachmentType = Database["public"]["Enums"]["attachment_type"];
@@ -314,6 +315,10 @@ async function handleMessage(e: MessageEvent): Promise<ProcessResult> {
   });
   if (!messageId) return { status: "duplicate" };
   if (m.attachments?.length) await saveAttachments(conversationId, messageId, m.attachments);
+  // Aviso al celular del equipo (no si la asesora IA está atendiendo esa conversación).
+  if (inbound) {
+    await avisarMensajeNuevo(conversationId, m.text ?? null, m.attachments?.length ?? 0).catch((err) => console.error("aviso", err));
+  }
   // Seguimiento automático: si el mensaje muestra pedido, pago, envío o entrega, mueve la etapa.
   await clasificarMensaje(messageId).catch((err) => console.error("clasificador", messageId, err));
   // Asesora IA: contesta primero si está encendida (ella misma revisa modo, etapa y si atiende una persona).
@@ -394,6 +399,9 @@ async function handleComment(e: CommentEvent): Promise<ProcessResult> {
     replyTo: c.parentCommentId,
     createdAt: c.createdAt,
   });
+  if (messageId && !c.author?.isOwnAccount) {
+    await avisarMensajeNuevo(conversationId, c.text ?? null, 0).catch((err) => console.error("aviso", err));
+  }
   return messageId ? { status: "ok" } : { status: "duplicate" };
 }
 

@@ -11,6 +11,9 @@ export const metadata: Metadata = {
   title: "CRM Yesandy",
   description: "Bandeja de mensajes y seguimiento de clientes de Almacén Yesandy",
   robots: { index: false, follow: false },
+  icons: { icon: "/icon-192.png", apple: "/apple-touch-icon.png" },
+  // En iPhone, abrir desde la pantalla de inicio como app (necesario para las notificaciones).
+  appleWebApp: { capable: true, title: "Yesandy", statusBarStyle: "default" },
 };
 
 export const viewport: Viewport = {
