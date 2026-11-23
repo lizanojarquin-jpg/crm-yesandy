@@ -2,6 +2,7 @@ import { after, NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { verifyZernioSignature } from "@/lib/zernio/signature";
 import { processZernioEvent } from "@/lib/zernio/ingest";
+import { retomarConversaciones } from "@/lib/ia/retomar";
 
 // La asesora IA espera unos segundos por si el cliente sigue escribiendo y luego piensa y envía.
 export const maxDuration = 120;
@@ -56,6 +57,8 @@ export async function POST(request: Request) {
         .update({ error: e instanceof Error ? e.message : String(e) })
         .eq("id", rowId);
     }
+    // De paso (como mucho cada 10 min y en horario): retomar clientes que llevan 6 h esperando.
+    await retomarConversaciones().catch((e) => console.error("retomar", e));
   });
 
   return NextResponse.json({ ok: true });

@@ -15,6 +15,7 @@ import {
 } from "@/lib/zernio/client";
 import { contarVariables, cuerpo, plantillasDe, rellenar } from "@/lib/inbox/plantillas";
 import { clasificarMensaje } from "@/lib/ia/clasificador";
+import { avisarLiberado } from "@/lib/push";
 import { ventanaMensajes } from "@/lib/inbox/ventana";
 import { ETAPAS, type Etapa } from "@/lib/inbox/etiquetas";
 
@@ -28,7 +29,7 @@ async function cargar(conversationId: string) {
   const { data } = await sb
     .from("conversations")
     .select(
-      "id, kind, external_conversation_id, external_post_id, last_inbound_at, assigned_to, " +
+      "id, kind, external_conversation_id, external_post_id, last_inbound_at, assigned_to, ai_attending, " +
         "canal:channel_accounts(platform, zernio_account_id)",
     )
     .eq("id", conversationId)
@@ -40,20 +41,35 @@ async function cargar(conversationId: string) {
       external_post_id: string | null;
       last_inbound_at: string | null;
       assigned_to: string | null;
+      ai_attending: boolean;
       canal: { platform: "whatsapp" | "facebook" | "instagram" | "tiktok"; zernio_account_id: string };
     } | null>();
   return data;
 }
 
 /** Solo responde quien tomó la conversación, o un administrador. */
-function sinPermisoParaResponder(usuario: { id: string; rol: string }, conv: { assigned_to: string | null }): Estado {
+function sinPermisoParaResponder(
+  usuario: { id: string; rol: string },
+  conv: { assigned_to: string | null; ai_attending: boolean },
+): Estado {
   if (usuario.rol === "admin" || conv.assigned_to === usuario.id) return null;
   return {
     ok: false,
     mensaje: conv.assigned_to
       ? "Esta conversación la atiende otra persona. Solo ella y administración pueden responder."
-      : "Toma la conversación para poder responder.",
+      : conv.ai_attending
+        ? "La asesora IA está atendiendo a este cliente. Te avisamos cuando esté listo para tomarlo."
+        : "Toma la conversación para poder responder.",
   };
+}
+
+/** Una persona entra a un chat que tenía la IA: la IA se retira y deja de bloquearlo. */
+async function retirarIA(conversationId: string) {
+  await createAdminClient()
+    .from("conversations")
+    .update({ ai_mode: "off", ai_attending: false, ai_attending_since: null })
+    .eq("id", conversationId)
+    .eq("ai_attending", true);
 }
 
 function explicar(e: unknown): string {
@@ -189,8 +205,10 @@ export async function enviar(conversationId: string, _prev: Estado, fd: FormData
     return { ok: false, mensaje: explicar(e) };
   }
 
-  // Si la IA había pasado la conversación, quien responde la atiende.
+  // Si la IA había pasado la conversación, quien responde la atiende. Si la IA la tenía
+  // (solo administración puede escribir ahí), la IA se retira.
   await tomarTraspasos(conv.id, usuario.id);
+  if (conv.ai_attending) await retirarIA(conv.id);
   refresh();
   return { ok: true, mensaje: "Enviado", n: Date.now() };
 }
@@ -321,14 +339,36 @@ export async function asignar(conversationId: string, perfilId: string | null) {
   refresh();
 }
 
-/** Tomar: solo conversaciones libres (administración puede tomar cualquiera). */
+/**
+ * Tomar: ventas solo toma conversaciones libres que no esté atendiendo la IA
+ * (la IA las habilita al pasarlas a vendedora). Administración puede tomar cualquiera.
+ */
 export async function tomar(conversationId: string) {
   const usuario = await getUsuarioActual();
   const sb = await createClient();
   let q = sb.from("conversations").update({ assigned_to: usuario.id }).eq("id", conversationId);
-  if (usuario.rol !== "admin") q = q.is("assigned_to", null);
+  if (usuario.rol !== "admin") q = q.is("assigned_to", null).eq("ai_attending", false);
   const { data } = await q.select("id");
-  if (data?.length) await tomarTraspasos(conversationId, usuario.id);
+  if (data?.length) {
+    await tomarTraspasos(conversationId, usuario.id);
+    if (usuario.rol === "admin") await retirarIA(conversationId);
+  }
+  refresh();
+}
+
+/** (Administración) Quita el chat a la IA y lo deja disponible para que lo tome ventas. */
+export async function liberarParaVentas(conversationId: string) {
+  await requireAdmin();
+  const admin = createAdminClient();
+  const { data } = await admin
+    .from("conversations")
+    .update({ ai_mode: "handoff", ai_attending: false, ai_attending_since: null })
+    .eq("id", conversationId)
+    .select("id");
+  if (data?.length) {
+    await admin.from("ai_handoffs").insert({ conversation_id: conversationId, reason: "Administración lo liberó para ventas.", summary: {} });
+    after(() => avisarLiberado(conversationId).catch(() => null));
+  }
   refresh();
 }
 
@@ -346,7 +386,9 @@ async function tomarTraspasos(conversationId: string, perfilId: string) {
 export async function cambiarIAConversacion(conversationId: string, modo: "on" | "off") {
   await getUsuarioActual();
   const sb = await createClient();
-  await sb.from("conversations").update({ ai_mode: modo }).eq("id", conversationId);
+  // La regla de la base de datos decide si esta persona puede (dueña del chat o administración).
+  const { data } = await sb.from("conversations").update({ ai_mode: modo }).eq("id", conversationId).select("id");
+  if (data?.length && modo === "off") await retirarIA(conversationId);
   refresh();
 }
 

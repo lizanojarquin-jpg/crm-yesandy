@@ -472,7 +472,10 @@ export type Database = {
       }
       conversations: {
         Row: {
+          ai_attending: boolean
+          ai_attending_since: string | null
           ai_mode: Database["public"]["Enums"]["ai_mode"]
+          ai_revived_message_id: string | null
           assigned_to: string | null
           channel_account_id: string
           contact_id: string
@@ -490,7 +493,10 @@ export type Database = {
           updated_at: string
         }
         Insert: {
+          ai_attending?: boolean
+          ai_attending_since?: string | null
           ai_mode?: Database["public"]["Enums"]["ai_mode"]
+          ai_revived_message_id?: string | null
           assigned_to?: string | null
           channel_account_id: string
           contact_id: string
@@ -508,7 +514,10 @@ export type Database = {
           updated_at?: string
         }
         Update: {
+          ai_attending?: boolean
+          ai_attending_since?: string | null
           ai_mode?: Database["public"]["Enums"]["ai_mode"]
+          ai_revived_message_id?: string | null
           assigned_to?: string | null
           channel_account_id?: string
           contact_id?: string
@@ -526,6 +535,13 @@ export type Database = {
           updated_at?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "conversations_ai_revived_message_id_fkey"
+            columns: ["ai_revived_message_id"]
+            isOneToOne: false
+            referencedRelation: "messages"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "conversations_assigned_to_fkey"
             columns: ["assigned_to"]

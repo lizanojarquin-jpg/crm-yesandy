@@ -84,7 +84,7 @@ export async function avisarMensajeNuevo(conversationId: string, texto: string |
   const c = await conversacion(conversationId);
   if (!c) return;
   // Si la asesora IA está atendiendo esta conversación, no se avisa cada mensaje: se avisa al pasar a vendedora.
-  if (c.kind === "dm" && c.ai_mode === "on" && ETAPAS_IA.includes(c.contacto.stage)) {
+  if (c.kind === "dm" && c.ai_mode === "on" && !c.assigned_to && ETAPAS_IA.includes(c.contacto.stage)) {
     const { modo, contactosPrueba } = await leerAjustesIA();
     if (modo === "encendida" || (modo === "pruebas" && contactosPrueba.includes(c.contacto.id))) return;
   }
@@ -109,6 +109,30 @@ export async function avisarTraspaso(conversationId: string, motivo: string) {
     { titulo: `La IA pasó a ${nombre(c)} a vendedora`, cuerpo: motivo, url: `/c/${c.id}`, tag: `conv-${c.id}` },
     destinatarios(c),
   );
+}
+
+/** La IA no pudo responder: el chat sigue bloqueado para ventas, así que se avisa solo a administración. */
+export async function avisarFallaIA(conversationId: string) {
+  const c = await conversacion(conversationId);
+  if (!c) return;
+  const { data: admins } = await createAdminClient().from("profiles").select("id").eq("role", "admin").eq("active", true);
+  if (!admins?.length) return;
+  await avisar(
+    {
+      titulo: `⚠️ La IA no pudo responder a ${nombre(c)}`,
+      cuerpo: "Responde tú o toca «Liberar para ventas» en la conversación.",
+      url: `/c/${c.id}`,
+      tag: `falla-${c.id}`,
+    },
+    admins.map((a) => a.id),
+  );
+}
+
+/** Administración liberó un chat que tenía la IA: ya lo puede tomar ventas. */
+export async function avisarLiberado(conversationId: string) {
+  const c = await conversacion(conversationId);
+  if (!c) return;
+  await avisar({ titulo: `${nombre(c)} está disponible para tomar`, cuerpo: "Administración lo liberó para ventas.", url: `/c/${c.id}`, tag: `conv-${c.id}` });
 }
 
 /** El seguimiento automático detectó un comprobante de pago. */

@@ -1,4 +1,4 @@
-import { alternarContactoPrueba, cambiarIAConversacion } from "../acciones";
+import { alternarContactoPrueba, cambiarIAConversacion, liberarParaVentas } from "../acciones";
 import type { ModoIA } from "@/lib/ia/asesora";
 
 /** Sección de la ficha: si la asesora IA responde en esta conversación. */
@@ -10,6 +10,7 @@ export function ControlIA({
   modoGlobal,
   esPrueba,
   esAdmin,
+  aiAttending,
 }: {
   conversationId: string;
   contactId: string;
@@ -18,9 +19,11 @@ export function ControlIA({
   modoGlobal: ModoIA;
   esPrueba: boolean;
   esAdmin: boolean;
+  aiAttending: boolean;
 }) {
   let estado: string;
   if (esComentario) estado = "No responde comentarios.";
+  else if (aiAttending) estado = "Está atendiendo a este cliente. Ventas lo podrá tomar cuando la IA lo pase.";
   else if (aiMode === "handoff") estado = "Pasó la conversación a vendedora.";
   else if (aiMode === "off") estado = "Apagada en esta conversación.";
   else if (modoGlobal === "apagada") estado = "Apagada para todos (Configuración).";
@@ -38,6 +41,11 @@ export function ControlIA({
               {aiMode === "on" ? "Apagar IA aquí" : "Volver a encender IA aquí"}
             </button>
           </form>
+          {esAdmin && aiAttending && (
+            <form action={liberarParaVentas.bind(null, conversationId)}>
+              <button className="h-9 rounded-lg border border-accent px-3 text-sm font-medium text-accent">Liberar para ventas</button>
+            </form>
+          )}
           {esAdmin && (
             <form action={alternarContactoPrueba.bind(null, contactId)}>
               <button className="h-9 rounded-lg border border-border px-3 text-sm font-medium">

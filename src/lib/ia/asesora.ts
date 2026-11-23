@@ -3,7 +3,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { sendInboxMessage } from "@/lib/zernio/client";
 import { chatConHerramientas, type Herramienta, type MensajeChat, type Parte } from "./openrouter";
 import { buscarProductos, CATEGORIAS, productosActivos, type Producto } from "./catalogo";
-import { avisarTraspaso } from "@/lib/push";
+import { avisarFallaIA, avisarTraspaso } from "@/lib/push";
 
 // Asesora IA (Fase 6): contesta primero en los mensajes directos como asesora, no como
 // vendedora. Propone prendas del catálogo y pasa a una persona para talla, color y precio.
@@ -295,6 +295,8 @@ export async function pensar(p: {
   conocimiento?: string;
   lecciones?: Leccion[];
   ahora?: Date;
+  /** Instrucción adicional para una situación especial (p. ej. retomar a un cliente que espera). */
+  extra?: string;
 }): Promise<Decision> {
   const [conocimiento, lecciones] = await Promise.all([
     p.conocimiento ?? leerConocimiento(),
@@ -312,7 +314,7 @@ export async function pensar(p: {
         conocimiento,
         lecciones,
         ahora: p.ahora ?? new Date(),
-      }),
+      }) + (p.extra ? `\n\nSITUACIÓN ESPECIAL\n${p.extra}` : ""),
     },
     ...armarHistorial(p.turnos),
   ];
@@ -391,10 +393,12 @@ export async function leerAjustesIA(): Promise<{ modo: ModoIA; contactosPrueba: 
 // ---------------------------------------------------------------------
 // Responder: lo llama el webhook con cada mensaje directo entrante
 // ---------------------------------------------------------------------
-type Conv = {
+export type Conv = {
   id: string;
   kind: "dm" | "comment";
   ai_mode: "on" | "off" | "handoff";
+  ai_attending: boolean;
+  assigned_to: string | null;
   external_conversation_id: string;
   contacto: { id: string; name: string | null; stage: string; ai_enabled: boolean };
   canal: { platform: Plataforma; zernio_account_id: string };
@@ -418,7 +422,7 @@ export async function responderConIA(messageId: string, opciones: { esperaMs?: n
       await db
         .from("conversations")
         .select(
-          "id, kind, ai_mode, external_conversation_id, " +
+          "id, kind, ai_mode, ai_attending, assigned_to, external_conversation_id, " +
             "contacto:contacts(id, name, stage, ai_enabled), canal:channel_accounts(platform, zernio_account_id)",
         )
         .eq("id", msg.conversation_id)
@@ -444,8 +448,36 @@ export async function responderConIA(messageId: string, opciones: { esperaMs?: n
     return `${status}: ${detail}`;
   };
 
+  // "IA atendiendo": mientras está marcada, ventas ve el chat pero no lo puede tomar.
+  const marcar = (atendiendo: boolean) =>
+    db
+      .from("conversations")
+      .update(atendiendo ? { ai_attending: true, ai_attending_since: new Date().toISOString() } : { ai_attending: false, ai_attending_since: null })
+      .eq("id", conv!.id);
+  // La IA no se queda con el chat: lo suelta para el equipo.
+  const soltar = async (detalle: string) => {
+    if (conv?.ai_attending) await marcar(false);
+    return terminar("omitido", detalle);
+  };
+  /** Motivo por el que esta conversación no le toca a la IA, o null si le toca. */
+  const noLeToca = (c: Conv) =>
+    c.ai_mode !== "on"
+      ? c.ai_mode === "handoff"
+        ? "ya pasó a vendedora"
+        : "IA apagada en esta conversación"
+      : !c.contacto.ai_enabled
+        ? "IA apagada para este contacto"
+        : !ETAPAS_IA.includes(c.contacto.stage)
+          ? `etapa ${c.contacto.stage}: atiende el equipo`
+          : c.assigned_to
+            ? "la conversación ya la tomó una persona"
+            : null;
+
   let d: Decision | null = null;
   try {
+    // Si le toca a la IA, se bloquea para ventas desde ya (antes de la espera).
+    if (!noLeToca(conv) && !conv.ai_attending) await marcar(true);
+
     // Esperar por si el cliente sigue escribiendo; responde solo el último mensaje.
     await new Promise((r) => setTimeout(r, opciones.esperaMs ?? ESPERA_MS));
     const { data: ultimo } = await db
@@ -459,18 +491,11 @@ export async function responderConIA(messageId: string, opciones: { esperaMs?: n
     if (ultimo?.id !== msg.id) return terminar("omitido", "llegó otro mensaje del cliente");
 
     conv = (await cargarConv()) ?? conv;
-    if (conv.ai_mode !== "on") return terminar("omitido", conv.ai_mode === "handoff" ? "ya pasó a vendedora" : "IA apagada en esta conversación");
-    if (!conv.contacto.ai_enabled) return terminar("omitido", "IA apagada para este contacto");
-    if (!ETAPAS_IA.includes(conv.contacto.stage)) return terminar("omitido", `etapa ${conv.contacto.stage}: atiende el equipo`);
+    const motivo = noLeToca(conv);
+    if (motivo) return soltar(motivo);
 
     // Últimos mensajes (24 h para saber si una persona está atendiendo).
-    const { data: recientes } = await db
-      .from("messages")
-      .select("id, direction, sender_type, body, created_at, attachments(type, storage_path, external_url, transcript)")
-      .eq("conversation_id", conv.id)
-      .order("created_at", { ascending: false })
-      .limit(30);
-    const hist = (recientes ?? []).reverse();
+    const { hist, turnos } = await historialParaIA(conv.id);
     const hace24h = Date.now() - 24 * 3600_000;
     const persona = hist.find((m, i) => {
       if (m.sender_type !== "agent" || new Date(m.created_at).getTime() < hace24h) return false;
@@ -479,35 +504,13 @@ export async function responderConIA(messageId: string, opciones: { esperaMs?: n
         previo?.direction === "inbound" && new Date(m.created_at).getTime() - new Date(previo.created_at).getTime() < AUTOMATICO_MS;
       return !automatico;
     });
-    if (persona) return terminar("omitido", "una persona del equipo escribió en las últimas 24 h");
+    if (persona) return soltar("una persona del equipo escribió en las últimas 24 h");
 
     const mensajesIA = hist.filter((m) => m.sender_type === "ai" && new Date(m.created_at).getTime() >= hace24h).length;
     if (mensajesIA >= MAX_MENSAJES_IA_DIA) {
       await traspasar(conv, "Conversación larga con la IA: mejor que siga una persona.", RESUMEN_VACIO);
       return terminar("traspaso", "límite de mensajes de la IA por día");
     }
-
-    // Fotos del cliente con enlace temporal para que el modelo las vea.
-    const rutas = hist.flatMap((m) => (m.direction === "inbound" ? m.attachments : []).filter((a) => a.type === "image" && a.storage_path).map((a) => a.storage_path!));
-    const firmadas = new Map<string, string>();
-    if (rutas.length) {
-      const { data: urls } = await db.storage.from("attachments").createSignedUrls(rutas.slice(-4), 10 * 60);
-      for (const u of urls ?? []) if (u.path && u.signedUrl) firmadas.set(u.path, u.signedUrl);
-    }
-    const turnos: Turno[] = hist.map((m) => ({
-      de: m.direction === "inbound" ? "cliente" : m.sender_type === "ai" ? "ia" : "equipo",
-      // Las notas de voz transcritas se leen como texto.
-      texto:
-        [m.body, ...m.attachments.filter((a) => a.transcript).map((a) => `(nota de voz) ${a.transcript}`)].filter(Boolean).join("\n") ||
-        null,
-      imagenes: m.attachments
-        .filter((a) => a.type === "image")
-        .map((a) => (a.storage_path ? firmadas.get(a.storage_path) : m.direction === "outbound" ? a.external_url : null))
-        .filter((u): u is string => Boolean(u)),
-      otros: m.attachments
-        .filter((a) => a.type !== "image" && !a.transcript)
-        .map((a) => (a.type === "audio" ? "audio" : a.type === "video" ? "video" : "archivo")),
-    }));
 
     d = await pensar({ turnos, canal: conv.canal.platform, nombre: conv.contacto.name, etapa: conv.contacto.stage });
 
@@ -520,7 +523,11 @@ export async function responderConIA(messageId: string, opciones: { esperaMs?: n
       .limit(1)
       .single();
     const conv2 = await cargarConv();
-    if (ultimo2?.id !== msg.id || conv2?.ai_mode !== "on") return terminar("omitido", "la conversación cambió mientras la IA pensaba", d.costo);
+    if (ultimo2?.id !== msg.id) return terminar("omitido", "llegó otro mensaje mientras la IA pensaba", d.costo);
+    if (conv2 && noLeToca(conv2)) {
+      conv = conv2;
+      return soltar(`la conversación cambió mientras la IA pensaba (${noLeToca(conv2)})`);
+    }
 
     await enviarRespuesta(conv, run.id, d);
     if (d.pasar) {
@@ -532,11 +539,62 @@ export async function responderConIA(messageId: string, opciones: { esperaMs?: n
   } catch (e) {
     console.error("asesora", messageId, e);
     const error = e instanceof Error ? e.message : String(e);
+    // El chat sigue bloqueado para ventas (decisión de Allan): se avisa a administración para que lo libere o responda.
+    await avisarFallaIA(conv.id).catch(() => null);
     return terminar("error", d ? `${error} · iba a responder: ${d.texto}` : error, d?.costo);
   }
 }
 
-async function enviarRespuesta(conv: Conv, runId: string, d: Decision) {
+/** Últimos 30 mensajes de la conversación, con fotos del cliente (enlace temporal) y audios transcritos. */
+export async function historialParaIA(conversationId: string) {
+  const db = createAdminClient();
+  const { data: recientes } = await db
+    .from("messages")
+    .select("id, direction, sender_type, body, created_at, attachments(type, storage_path, external_url, transcript)")
+    .eq("conversation_id", conversationId)
+    .order("created_at", { ascending: false })
+    .limit(30);
+  const hist = (recientes ?? []).reverse();
+
+  // Fotos del cliente con enlace temporal para que el modelo las vea.
+  const rutas = hist.flatMap((m) =>
+    (m.direction === "inbound" ? m.attachments : []).filter((a) => a.type === "image" && a.storage_path).map((a) => a.storage_path!),
+  );
+  const firmadas = new Map<string, string>();
+  if (rutas.length) {
+    const { data: urls } = await db.storage.from("attachments").createSignedUrls(rutas.slice(-4), 10 * 60);
+    for (const u of urls ?? []) if (u.path && u.signedUrl) firmadas.set(u.path, u.signedUrl);
+  }
+  const turnos: Turno[] = hist.map((m) => ({
+    de: m.direction === "inbound" ? "cliente" : m.sender_type === "ai" ? "ia" : "equipo",
+    // Las notas de voz transcritas se leen como texto.
+    texto:
+      [m.body, ...m.attachments.filter((a) => a.transcript).map((a) => `(nota de voz) ${a.transcript}`)].filter(Boolean).join("\n") || null,
+    imagenes: m.attachments
+      .filter((a) => a.type === "image")
+      .map((a) => (a.storage_path ? firmadas.get(a.storage_path) : m.direction === "outbound" ? a.external_url : null))
+      .filter((u): u is string => Boolean(u)),
+    otros: m.attachments
+      .filter((a) => a.type !== "image" && !a.transcript)
+      .map((a) => (a.type === "audio" ? "audio" : a.type === "video" ? "video" : "archivo")),
+  }));
+  return { hist, turnos };
+}
+
+export async function cargarConvIA(conversationId: string) {
+  const { data } = await createAdminClient()
+    .from("conversations")
+    .select(
+      "id, kind, ai_mode, ai_attending, assigned_to, external_conversation_id, " +
+        "contacto:contacts(id, name, stage, ai_enabled), canal:channel_accounts(platform, zernio_account_id)",
+    )
+    .eq("id", conversationId)
+    .single()
+    .returns<Conv>();
+  return data;
+}
+
+export async function enviarRespuesta(conv: Conv, runId: string, d: Decision) {
   const db = createAdminClient();
   const accountId = conv.canal.zernio_account_id;
   let n = 0;
@@ -573,20 +631,48 @@ async function enviarRespuesta(conv: Conv, runId: string, d: Decision) {
 
   await enviar(d.texto);
   if (!d.productos.length) return;
+  // Una foto que Meta no logra descargar no debe cortar la respuesta: se sigue con las demás
+  // y el cliente igual recibe el enlace del producto.
+  const foto = async (texto: string | null, imagen: string) => {
+    try {
+      await enviar(texto, imagen);
+      return true;
+    } catch (e) {
+      console.error("asesora: foto no enviada", imagen, e instanceof Error ? e.message : e);
+      return false;
+    }
+  };
   if (conv.canal.platform === "whatsapp") {
-    // WhatsApp: foto con el nombre y el enlace al pie.
-    for (const p of d.productos) await enviar(`${p.name}\n${p.product_url}`, p.image_url!);
+    // WhatsApp: foto con el nombre y el enlace al pie; si la foto falla, va el texto solo.
+    for (const p of d.productos) {
+      const texto = `${p.name}\n${p.product_url}`;
+      if (!(await foto(texto, p.image_url!))) await enviar(texto);
+    }
   } else {
-    // Messenger e Instagram no llevan texto en la foto: fotos y después los enlaces.
-    for (const p of d.productos) await enviar(null, p.image_url!);
+    // Messenger e Instagram no llevan texto en la foto: fotos y después los enlaces (siempre).
+    for (const p of d.productos) await foto(null, p.image_url!);
     await enviar(d.productos.map((p) => `• ${p.name}\n${p.product_url}`).join("\n"));
   }
 }
 
-async function traspasar(conv: Conv, motivo: string, resumen: Resumen) {
+/**
+ * Pasa la conversación a ventas. Con `liberar`, además la quita a quien la tenía
+ * (al retomar a un cliente que esperaba, la puede tomar la misma vendedora u otra).
+ */
+export async function traspasar(conv: Conv, motivo: string, resumen: Resumen, opciones: { liberar?: boolean } = {}) {
   const db = createAdminClient();
   await db.from("ai_handoffs").insert({ conversation_id: conv.id, reason: motivo, summary: resumen });
-  await db.from("conversations").update({ ai_mode: "handoff" }).eq("id", conv.id);
+  // Desde aquí ventas ya puede tomarla.
+  await db
+    .from("conversations")
+    .update({
+      ai_mode: "handoff",
+      ai_attending: false,
+      ai_attending_since: null,
+      ...(opciones.liberar ? { assigned_to: null } : {}),
+    })
+    .eq("id", conv.id);
+  if (opciones.liberar) conv = { ...conv, assigned_to: null };
   await avisarTraspaso(conv.id, motivo).catch((e) => console.error("aviso traspaso", e));
   if (ORDEN.indexOf(conv.contacto.stage) < ORDEN.indexOf("ready_for_seller")) {
     await db.from("stage_events").insert({

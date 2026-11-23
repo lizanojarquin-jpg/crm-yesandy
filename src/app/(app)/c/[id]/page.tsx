@@ -11,7 +11,7 @@ import { ventanaMensajes } from "@/lib/inbox/ventana";
 import { plantillasUsables } from "@/lib/inbox/plantillas";
 import { Avatar } from "@/components/ui/avatar";
 import { BandejaShell } from "../../_bandeja/shell";
-import { cambiarEstado, tomar } from "../../_bandeja/acciones";
+import { cambiarEstado, liberarParaVentas, tomar } from "../../_bandeja/acciones";
 import { MarcoConversacion } from "../../_bandeja/conversacion/marco";
 import { Desplazador } from "../../_bandeja/conversacion/desplazador";
 import { Mensajes } from "../../_bandeja/conversacion/mensajes";
@@ -88,7 +88,14 @@ export default async function ConversacionPage({
           {conv.status === "closed" ? " · cerrada" : ""}
         </p>
       </div>
-      {conv.assigned_to !== usuario.id && (esAdmin || !conv.assigned_to) && (
+      {esAdmin && conv.ai_attending && (
+        <form action={liberarParaVentas.bind(null, conv.id)} className="hidden sm:block">
+          <button className="inline-flex h-9 items-center rounded-lg border border-accent px-3 text-sm font-medium text-accent">
+            Liberar para ventas
+          </button>
+        </form>
+      )}
+      {conv.assigned_to !== usuario.id && (esAdmin || (!conv.assigned_to && !conv.ai_attending)) && (
         <form action={tomar.bind(null, conv.id)}>
           <button className="inline-flex h-9 items-center rounded-lg bg-accent px-3 text-sm font-medium text-accent-foreground">
             Tomar
@@ -151,6 +158,11 @@ export default async function ConversacionPage({
                   Esta conversación la atiende <b className="text-foreground">{atiende ?? "otra persona"}</b>. Solo esa persona y administración
                   pueden responder.
                 </p>
+              ) : conv.ai_attending ? (
+                <p className="text-sm text-muted">
+                  🤖 <b className="text-foreground">La asesora IA está atendiendo a este cliente.</b> Cuando esté listo para ventas, te llega un
+                  aviso y aparece como «Lista para tomar».
+                </p>
               ) : (
                 <form action={tomar.bind(null, conv.id)} className="flex items-center gap-3">
                   <p className="flex-1 text-sm text-muted">Para responder, primero toma la conversación.</p>
@@ -178,6 +190,7 @@ export default async function ConversacionPage({
                   modoGlobal={ajustesIA.modo}
                   esPrueba={ajustesIA.contactosPrueba.includes(conv.contacto.id)}
                   esAdmin={usuario.rol === "admin"}
+                  aiAttending={conv.ai_attending}
                 />
               }
             />

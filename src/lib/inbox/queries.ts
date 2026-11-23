@@ -10,7 +10,7 @@ export async function listarConversaciones(f: Filtros, usuarioId: string) {
   let q = sb
     .from("conversations")
     .select(
-      "id, kind, status, unread_count, last_message_at, last_message_preview, assigned_to, ai_mode, " +
+      "id, kind, status, unread_count, last_message_at, last_message_preview, assigned_to, ai_mode, ai_attending, " +
         "contacto:contacts!inner(id, name, phone, stage, stage_pending_review, contact_identities(handle)), " +
         "canal:channel_accounts!inner(platform)",
     )
@@ -36,6 +36,8 @@ export type ConversacionLista = {
   last_message_preview: string | null;
   assigned_to: string | null;
   ai_mode: "on" | "off" | "handoff";
+  /** La asesora IA está atendiendo: ventas no la puede tomar todavía. */
+  ai_attending: boolean;
   contacto: {
     id: string;
     name: string | null;
@@ -61,7 +63,7 @@ export async function obtenerConversacion(id: string) {
   const { data, error } = await sb
     .from("conversations")
     .select(
-      "id, kind, status, unread_count, assigned_to, ai_mode, external_conversation_id, external_post_id, post_permalink, last_inbound_at, contact_id, " +
+      "id, kind, status, unread_count, assigned_to, ai_mode, ai_attending, external_conversation_id, external_post_id, post_permalink, last_inbound_at, contact_id, " +
         "contacto:contacts(id, name, phone, stage, stage_pending_review, notes, follow_up_at, loss_reason, contact_identities(platform, handle)), " +
         "canal:channel_accounts(platform, display_name, zernio_account_id)",
     )
@@ -83,6 +85,7 @@ export type ConversacionDetalle = {
   post_permalink: string | null;
   last_inbound_at: string | null;
   ai_mode: "on" | "off" | "handoff";
+  ai_attending: boolean;
   contact_id: string;
   contacto: {
     id: string;
