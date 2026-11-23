@@ -6,7 +6,7 @@ import { usePathname } from "next/navigation";
 const ITEMS = [
   { href: "/", label: "Bandeja", icono: IconoBandeja, soloAdmin: false },
   { href: "/seguimiento", label: "Seguimiento", icono: IconoSeguimiento, soloAdmin: false },
-  { href: "/entrenar", label: "Entrenar IA", icono: IconoEntrenar, soloAdmin: false },
+  { href: "/entrenar", label: "Entrenar IA", icono: IconoEntrenar, soloAdmin: true },
   { href: "/configuracion", label: "Configuración", icono: IconoAjustes, soloAdmin: true },
 ];
 

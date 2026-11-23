@@ -24,28 +24,40 @@ type Fila = {
 const CAMPOS =
   "id, name, phone, stage, stage_pending_review, follow_up_at, contact_identities(handle), " +
   "conversations(id, last_message_at, canal:channel_accounts(platform))";
+const CAMPOS_MIOS =
+  "id, name, phone, stage, stage_pending_review, follow_up_at, contact_identities(handle), " +
+  "conversations!inner(id, last_message_at, assigned_to, canal:channel_accounts(platform))";
 
 const EN_CURSO: Etapa[] = ["order_confirmed", "payment_received", "shipped"];
 
+// Toda la fila abre la conversación: el enlace del nombre se estira sobre la fila (los botones quedan encima).
+const FILA = "relative flex gap-3 border-b border-border/70 px-4 py-3 last:border-b-0 hover:bg-background";
+const ENLACE_FILA = "truncate font-medium after:absolute after:inset-0 after:content-[''] focus-visible:outline-none focus-visible:after:ring-2 focus-visible:after:ring-accent";
+
 export default async function SeguimientoPage() {
-  await getUsuarioActual();
+  const usuario = await getUsuarioActual();
+  const esAdmin = usuario.rol === "admin";
   const sb = await createClient();
   const hoy = fechaInput(new Date().toISOString());
   const finHoy = `${hoy}T23:59:59-06:00`;
   const en7 = new Date(new Date(finHoy).getTime() + 7 * 86_400_000).toISOString();
 
+  // Administración ve todo; ventas, solo los clientes de las conversaciones que tomó.
+  const contactos = () =>
+    esAdmin
+      ? sb.from("contacts").select(CAMPOS)
+      : sb.from("contacts").select(CAMPOS_MIOS).eq("conversations.assigned_to", usuario.id);
+
   const [porConfirmar, paraHoy, proximos, enCurso] = await Promise.all([
-    sb.from("contacts").select(CAMPOS).eq("stage_pending_review", true).order("updated_at", { ascending: false }).limit(50).returns<Fila[]>(),
-    sb
-      .from("contacts")
-      .select(CAMPOS)
+    contactos().eq("stage_pending_review", true).order("updated_at", { ascending: false }).limit(50).returns<Fila[]>(),
+    contactos()
       .lte("follow_up_at", finHoy)
       .not("stage", "in", "(delivered,lost)")
       .order("follow_up_at")
       .limit(50)
       .returns<Fila[]>(),
-    sb.from("contacts").select(CAMPOS).gt("follow_up_at", finHoy).lte("follow_up_at", en7).order("follow_up_at").limit(50).returns<Fila[]>(),
-    sb.from("contacts").select(CAMPOS).in("stage", EN_CURSO).order("updated_at", { ascending: false }).limit(150).returns<Fila[]>(),
+    contactos().gt("follow_up_at", finHoy).lte("follow_up_at", en7).order("follow_up_at").limit(50).returns<Fila[]>(),
+    contactos().in("stage", EN_CURSO).order("updated_at", { ascending: false }).limit(150).returns<Fila[]>(),
   ]);
 
   // Lo que detectó la IA (motivo) para cada contacto por confirmar.
@@ -62,7 +74,8 @@ export default async function SeguimientoPage() {
   const motivo = new Map<string, string>();
   for (const n of notas ?? []) if (n.note && !motivo.has(n.contact_id)) motivo.set(n.contact_id, n.note);
 
-  // Conversaciones que la asesora IA pasó a vendedora y nadie ha tomado.
+  // Conversaciones que la asesora IA pasó a vendedora y nadie ha tomado (solo administración:
+  // ventas ve en Seguimiento solo lo que tomó; las libres las encuentra en la bandeja).
   const { data: traspasos } = await sb
     .from("ai_handoffs")
     .select(
@@ -70,7 +83,7 @@ export default async function SeguimientoPage() {
     )
     .is("taken_by", null)
     .order("created_at", { ascending: false })
-    .limit(50)
+    .limit(esAdmin ? 50 : 0)
     .returns<
       {
         id: string;
@@ -91,7 +104,11 @@ export default async function SeguimientoPage() {
   return (
     <div className="mx-auto max-w-3xl px-4 py-6">
       <h1 className="text-xl font-semibold">Seguimiento</h1>
-      <p className="text-sm text-muted">Lo que pasó o detectó la IA, a quién escribirle hoy y los pedidos en curso.</p>
+      <p className="text-sm text-muted">
+        {esAdmin
+          ? "Lo que pasó o detectó la IA, a quién escribirle hoy y los pedidos en curso. Toca un cliente para abrir su conversación."
+          : "Tus clientes (las conversaciones que tomaste): a quién escribirle hoy y los pedidos en curso. Toca un cliente para abrir su conversación."}
+      </p>
 
       {nada && (
         <EmptyState
@@ -113,11 +130,11 @@ export default async function SeguimientoPage() {
               const nombre = nombreContacto(c.contacto, c.contacto.contact_identities[0]?.handle);
               const extra = [t.summary?.prendas, t.summary?.talla && `talla ${t.summary.talla}`, t.summary?.ocasion].filter(Boolean).join(" · ");
               return (
-                <li key={t.id} className="flex gap-3 border-b border-border/70 px-4 py-3 last:border-b-0">
+                <li key={t.id} className={FILA}>
                   <Avatar nombre={nombre} canal={c.canal.platform} />
                   <div className="min-w-0 flex-1">
                     <div className="flex items-baseline gap-2">
-                      <Link href={`/c/${c.id}`} className="truncate font-medium hover:underline">
+                      <Link href={`/c/${c.id}`} className={ENLACE_FILA}>
                         {nombre}
                       </Link>
                       <span className="ml-auto shrink-0 text-xs text-muted">{horaCorta(t.created_at)}</span>
@@ -136,7 +153,7 @@ export default async function SeguimientoPage() {
         {(f) => (
           <>
             {motivo.get(f.id) && <p className="text-xs text-muted italic">{motivo.get(f.id)}</p>}
-            <form action={confirmarEtapa.bind(null, f.id)} className="mt-1">
+            <form action={confirmarEtapa.bind(null, f.id)} className="relative z-10 mt-1">
               <button className="h-8 rounded-lg bg-amber-600 px-3 text-xs font-medium text-white">Confirmar {textoEtapa(f.stage)}</button>
             </form>
           </>
@@ -186,12 +203,12 @@ function Seccion({
           const ultima = [...f.conversations].sort((a, b) => (b.last_message_at ?? "").localeCompare(a.last_message_at ?? ""))[0];
           const nombre = nombreContacto(f, f.contact_identities[0]?.handle);
           return (
-            <li key={f.id} className="flex gap-3 border-b border-border/70 px-4 py-3 last:border-b-0">
+            <li key={f.id} className={FILA}>
               <Avatar nombre={nombre} canal={ultima?.canal.platform} />
               <div className="min-w-0 flex-1">
                 <div className="flex items-baseline gap-2">
                   {ultima ? (
-                    <Link href={`/c/${ultima.id}`} className="truncate font-medium hover:underline">
+                    <Link href={`/c/${ultima.id}`} className={ENLACE_FILA}>
                       {nombre}
                     </Link>
                   ) : (

@@ -137,7 +137,7 @@ CUÁNDO PASAS A UNA ASESORA (pasar_a_vendedora = true)
 - Tiene una queja, un problema con un pedido o ya está pagando.
 - Manda un video o algo que no entiendes, o pide hablar con una persona.
 - No sabes la respuesta.
-Si manda un audio, pídele amablemente que te lo escriba (sin pasar a una asesora). Si ya se lo pediste antes y vuelve a mandar audio, pasa a una asesora.
+Las notas de voz te llegan transcritas como "(nota de voz) …": respóndelas como si fueran texto. Si llega un audio que no pudiste leer, pídele amablemente que te lo escriba (sin pasar a una asesora); si vuelve a pasar, pasa a una asesora.
 En ese mensaje dile, con tus palabras, que una asesora del equipo le va a confirmar ${t.abierta ? "en un momento" : `en cuanto abramos (${t.proxima})`}. No hagas más preguntas en ese mensaje.
 
 HERRAMIENTAS
@@ -466,7 +466,7 @@ export async function responderConIA(messageId: string, opciones: { esperaMs?: n
     // Últimos mensajes (24 h para saber si una persona está atendiendo).
     const { data: recientes } = await db
       .from("messages")
-      .select("id, direction, sender_type, body, created_at, attachments(type, storage_path, external_url)")
+      .select("id, direction, sender_type, body, created_at, attachments(type, storage_path, external_url, transcript)")
       .eq("conversation_id", conv.id)
       .order("created_at", { ascending: false })
       .limit(30);
@@ -496,12 +496,17 @@ export async function responderConIA(messageId: string, opciones: { esperaMs?: n
     }
     const turnos: Turno[] = hist.map((m) => ({
       de: m.direction === "inbound" ? "cliente" : m.sender_type === "ai" ? "ia" : "equipo",
-      texto: m.body,
+      // Las notas de voz transcritas se leen como texto.
+      texto:
+        [m.body, ...m.attachments.filter((a) => a.transcript).map((a) => `(nota de voz) ${a.transcript}`)].filter(Boolean).join("\n") ||
+        null,
       imagenes: m.attachments
         .filter((a) => a.type === "image")
         .map((a) => (a.storage_path ? firmadas.get(a.storage_path) : m.direction === "outbound" ? a.external_url : null))
         .filter((u): u is string => Boolean(u)),
-      otros: m.attachments.filter((a) => a.type !== "image").map((a) => (a.type === "audio" ? "audio" : a.type === "video" ? "video" : "archivo")),
+      otros: m.attachments
+        .filter((a) => a.type !== "image" && !a.transcript)
+        .map((a) => (a.type === "audio" ? "audio" : a.type === "video" ? "video" : "archivo")),
     }));
 
     d = await pensar({ turnos, canal: conv.canal.platform, nombre: conv.contacto.name, etapa: conv.contacto.stage });

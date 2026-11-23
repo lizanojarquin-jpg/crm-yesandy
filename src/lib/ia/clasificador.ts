@@ -91,7 +91,7 @@ export async function clasificarMensaje(messageId: string, { soloProbar = false 
   const { data: m } = await db
     .from("messages")
     .select(
-      "id, body, direction, created_at, conversation_id, attachments(id, type, storage_path), conversations!inner(kind, contact_id, contacts!inner(stage))",
+      "id, body, direction, created_at, conversation_id, attachments(id, type, storage_path, transcript), conversations!inner(kind, contact_id, contacts!inner(stage))",
     )
     .eq("id", messageId)
     .maybeSingle()
@@ -101,14 +101,16 @@ export async function clasificarMensaje(messageId: string, { soloProbar = false 
       direction: "inbound" | "outbound";
       created_at: string;
       conversation_id: string;
-      attachments: { id: string; type: string; storage_path: string | null }[];
+      attachments: { id: string; type: string; storage_path: string | null; transcript: string | null }[];
       conversations: { kind: "dm" | "comment"; contact_id: string; contacts: { stage: Etapa } };
     } | null>();
   if (!m) return { estado: "omitido", detalle: "no existe" };
   if (m.conversations.kind !== "dm") return { estado: "omitido", detalle: "comentario" };
 
   const imagenes = m.attachments.filter((a) => a.type === "image" && a.storage_path).slice(0, 3);
-  const texto = (m.body ?? "").replace(/^📋 /, "").trim();
+  // Las notas de voz cuentan como texto (ya vienen transcritas).
+  const voz = m.attachments.map((a) => a.transcript).filter(Boolean).join(" ");
+  const texto = [(m.body ?? "").replace(/^📋 /, "").trim(), voz ? `(nota de voz) ${voz}` : ""].filter(Boolean).join(" ");
   if (!imagenes.length && !PISTAS.test(texto)) return { estado: "omitido", detalle: "sin pistas" };
 
   if (!soloProbar) {

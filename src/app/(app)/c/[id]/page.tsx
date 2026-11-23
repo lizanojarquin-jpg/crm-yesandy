@@ -2,7 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getUsuarioActual } from "@/lib/auth";
 import { conQs, leerFiltros, qs } from "@/lib/inbox/filtros";
-import { listarEquipo, listarMensajes, obtenerConversacion, traspasoAbierto } from "@/lib/inbox/queries";
+import { listarEquipo, listarMensajes, listarRespuestasRapidas, obtenerConversacion, traspasoAbierto } from "@/lib/inbox/queries";
 import { leerAjustesIA } from "@/lib/ia/asesora";
 import { AvisoTraspaso } from "../../_bandeja/conversacion/traspaso";
 import { ControlIA } from "../../_bandeja/conversacion/control-ia";
@@ -23,6 +23,12 @@ export const metadata = { title: "Conversación · CRM Yesandy" };
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+/** Primer nombre "de verdad" del cliente (no teléfonos, emojis ni símbolos), con mayúscula inicial. */
+function primerNombre(nombre: string | null) {
+  const palabra = (nombre ?? "").split(/\s+/).find((p) => /^\p{L}[\p{L}'-]+$/u.test(p));
+  return palabra ? palabra.charAt(0).toUpperCase() + palabra.slice(1).toLowerCase() : "";
+}
+
 export default async function ConversacionPage({
   params,
   searchParams,
@@ -38,13 +44,18 @@ export default async function ConversacionPage({
 
   const conv = await obtenerConversacion(id);
   if (!conv) notFound();
-  const [mensajes, equipo, traspaso, ajustesIA] = await Promise.all([
+  const [mensajes, equipo, traspaso, ajustesIA, respuestas] = await Promise.all([
     listarMensajes(id),
     listarEquipo(),
     traspasoAbierto(id),
     leerAjustesIA(),
+    listarRespuestasRapidas(),
   ]);
   const nombres = new Map(equipo.map((p) => [p.id, p.display_name]));
+  const esAdmin = usuario.rol === "admin";
+  // Todas ven todas las conversaciones, pero solo responde quien la tomó (o administración).
+  const puedeResponder = esAdmin || conv.assigned_to === usuario.id;
+  const miNombre = equipo.find((p) => p.id === usuario.id)?.public_name ?? "";
 
   const nombre = nombreContacto(conv.contacto, conv.contacto.contact_identities[0]?.handle);
   const canal = plataforma(conv.canal.platform);
@@ -77,18 +88,20 @@ export default async function ConversacionPage({
           {conv.status === "closed" ? " · cerrada" : ""}
         </p>
       </div>
-      {conv.assigned_to !== usuario.id && (
+      {conv.assigned_to !== usuario.id && (esAdmin || !conv.assigned_to) && (
         <form action={tomar.bind(null, conv.id)}>
           <button className="inline-flex h-9 items-center rounded-lg bg-accent px-3 text-sm font-medium text-accent-foreground">
             Tomar
           </button>
         </form>
       )}
-      <form action={cambiarEstado.bind(null, conv.id, conv.status === "open" ? "closed" : "open")} className="hidden sm:block">
-        <button className="inline-flex h-9 items-center rounded-lg border border-border px-3 text-sm font-medium">
-          {conv.status === "open" ? "Cerrar" : "Reabrir"}
-        </button>
-      </form>
+      {puedeResponder && (
+        <form action={cambiarEstado.bind(null, conv.id, conv.status === "open" ? "closed" : "open")} className="hidden sm:block">
+          <button className="inline-flex h-9 items-center rounded-lg border border-border px-3 text-sm font-medium">
+            {conv.status === "open" ? "Cerrar" : "Reabrir"}
+          </button>
+        </form>
+      )}
     </>
   );
 
@@ -106,7 +119,7 @@ export default async function ConversacionPage({
       )}
       {traspaso && <AvisoTraspaso traspaso={traspaso} />}
       <Desplazador key={conv.id}>
-        <Mensajes mensajes={mensajes} nombres={nombres} />
+        <Mensajes mensajes={mensajes} nombres={nombres} esAdmin={esAdmin} />
       </Desplazador>
       <MarcarLeida id={conv.id} sinLeer={conv.unread_count} />
     </>
@@ -118,16 +131,34 @@ export default async function ConversacionPage({
         cabecera={cabecera}
         cuerpo={cuerpo}
         pie={
-          <Composer
-            key={conv.id}
-            conversationId={conv.id}
-            esComentario={esComentario}
-            permitePrivado={esComentario && (conv.canal.platform === "facebook" || conv.canal.platform === "instagram")}
-            puede={ventana.puede}
-            aviso={ventana.aviso}
-            plantillas={plantillas}
-            primerNombre={conv.contacto.name?.trim().split(/\s+/)[0] ?? ""}
-          />
+          puedeResponder ? (
+            <Composer
+              key={conv.id}
+              conversationId={conv.id}
+              esComentario={esComentario}
+              permitePrivado={esComentario && (conv.canal.platform === "facebook" || conv.canal.platform === "instagram")}
+              puede={ventana.puede}
+              aviso={ventana.aviso}
+              plantillas={plantillas}
+              primerNombre={primerNombre(conv.contacto.name)}
+              respuestas={respuestas}
+              vendedora={miNombre}
+            />
+          ) : (
+            <div className="border-t border-border bg-surface px-4 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+              {conv.assigned_to ? (
+                <p className="text-sm text-muted">
+                  Esta conversación la atiende <b className="text-foreground">{atiende ?? "otra persona"}</b>. Solo esa persona y administración
+                  pueden responder.
+                </p>
+              ) : (
+                <form action={tomar.bind(null, conv.id)} className="flex items-center gap-3">
+                  <p className="flex-1 text-sm text-muted">Para responder, primero toma la conversación.</p>
+                  <button className="h-10 shrink-0 rounded-lg bg-accent px-4 text-sm font-medium text-accent-foreground">Tomar</button>
+                </form>
+              )}
+            </div>
+          )
         }
         ficha={
           <>
@@ -136,8 +167,10 @@ export default async function ConversacionPage({
               equipo={equipo}
               nombres={nombres}
               q={q}
+              puedeEditar={puedeResponder}
+              esAdmin={esAdmin}
               controlIA={
-                <ControlIA
+                puedeResponder && <ControlIA
                   conversationId={conv.id}
                   contactId={conv.contacto.id}
                   esComentario={esComentario}
@@ -148,14 +181,16 @@ export default async function ConversacionPage({
                 />
               }
             />
-            <form
-              action={cambiarEstado.bind(null, conv.id, conv.status === "open" ? "closed" : "open")}
-              className="border-t border-border p-4 sm:hidden"
-            >
-              <button className="h-11 w-full rounded-lg border border-border text-sm font-medium">
-                {conv.status === "open" ? "Cerrar conversación" : "Reabrir conversación"}
-              </button>
-            </form>
+            {puedeResponder && (
+              <form
+                action={cambiarEstado.bind(null, conv.id, conv.status === "open" ? "closed" : "open")}
+                className="border-t border-border p-4 sm:hidden"
+              >
+                <button className="h-11 w-full rounded-lg border border-border text-sm font-medium">
+                  {conv.status === "open" ? "Cerrar conversación" : "Reabrir conversación"}
+                </button>
+              </form>
+            )}
           </>
         }
       />

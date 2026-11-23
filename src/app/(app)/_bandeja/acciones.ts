@@ -28,7 +28,7 @@ async function cargar(conversationId: string) {
   const { data } = await sb
     .from("conversations")
     .select(
-      "id, kind, external_conversation_id, external_post_id, last_inbound_at, " +
+      "id, kind, external_conversation_id, external_post_id, last_inbound_at, assigned_to, " +
         "canal:channel_accounts(platform, zernio_account_id)",
     )
     .eq("id", conversationId)
@@ -39,9 +39,21 @@ async function cargar(conversationId: string) {
       external_conversation_id: string;
       external_post_id: string | null;
       last_inbound_at: string | null;
+      assigned_to: string | null;
       canal: { platform: "whatsapp" | "facebook" | "instagram" | "tiktok"; zernio_account_id: string };
     } | null>();
   return data;
+}
+
+/** Solo responde quien tomó la conversación, o un administrador. */
+function sinPermisoParaResponder(usuario: { id: string; rol: string }, conv: { assigned_to: string | null }): Estado {
+  if (usuario.rol === "admin" || conv.assigned_to === usuario.id) return null;
+  return {
+    ok: false,
+    mensaje: conv.assigned_to
+      ? "Esta conversación la atiende otra persona. Solo ella y administración pueden responder."
+      : "Toma la conversación para poder responder.",
+  };
 }
 
 function explicar(e: unknown): string {
@@ -64,6 +76,8 @@ export async function enviar(conversationId: string, _prev: Estado, fd: FormData
   const usuario = await getUsuarioActual();
   const conv = await cargar(conversationId);
   if (!conv) return { ok: false, mensaje: "La conversación no existe." };
+  const bloqueo = sinPermisoParaResponder(usuario, conv);
+  if (bloqueo) return bloqueo;
 
   const texto = String(fd.get("mensaje") ?? "").trim();
   const archivo = fd.get("imagen");
@@ -188,6 +202,8 @@ export async function enviarPlantilla(conversationId: string, _prev: Estado, fd:
   if (!conv || conv.kind !== "dm" || conv.canal.platform !== "whatsapp") {
     return { ok: false, mensaje: "Las plantillas solo se usan en WhatsApp." };
   }
+  const bloqueo = sinPermisoParaResponder(usuario, conv);
+  if (bloqueo) return bloqueo;
   const nombre = String(fd.get("plantilla") ?? "");
   const idioma = String(fd.get("idioma") ?? "");
   const valores = fd.getAll("variable").map((v) => String(v).trim().slice(0, 500));
@@ -296,17 +312,24 @@ export async function marcarLeida(conversationId: string) {
   }
 }
 
+/** Solo administración asigna a otra persona. (Además lo impide la regla de la base de datos.) */
 export async function asignar(conversationId: string, perfilId: string | null) {
-  await getUsuarioActual();
+  const usuario = await getUsuarioActual();
+  if (usuario.rol !== "admin" && perfilId !== null && perfilId !== usuario.id) return;
   const sb = await createClient();
   await sb.from("conversations").update({ assigned_to: perfilId }).eq("id", conversationId);
   refresh();
 }
 
+/** Tomar: solo conversaciones libres (administración puede tomar cualquiera). */
 export async function tomar(conversationId: string) {
   const usuario = await getUsuarioActual();
-  await tomarTraspasos(conversationId, usuario.id);
-  await asignar(conversationId, usuario.id);
+  const sb = await createClient();
+  let q = sb.from("conversations").update({ assigned_to: usuario.id }).eq("id", conversationId);
+  if (usuario.rol !== "admin") q = q.is("assigned_to", null);
+  const { data } = await q.select("id");
+  if (data?.length) await tomarTraspasos(conversationId, usuario.id);
+  refresh();
 }
 
 /** Marca como atendidos los traspasos abiertos de la IA en esta conversación. */

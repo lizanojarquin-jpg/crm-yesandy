@@ -14,12 +14,17 @@ export async function Ficha({
   nombres,
   q,
   controlIA,
+  puedeEditar,
+  esAdmin,
 }: {
   conv: ConversacionDetalle;
   equipo: { id: string; display_name: string }[];
   nombres: Map<string, string>;
   q: string;
   controlIA?: React.ReactNode;
+  /** Quien tomó la conversación o administración. Las demás solo ven. */
+  puedeEditar: boolean;
+  esAdmin: boolean;
 }) {
   const c = conv.contacto;
   const { otras, etapas } = await datosFicha(c.id, conv.id);
@@ -42,6 +47,23 @@ export async function Ficha({
         </div>
       </div>
 
+      {!puedeEditar && (
+        <section className="flex flex-col gap-2 text-sm">
+          <p>
+            <span className="text-muted">Etapa: </span>
+            <Chip tono={c.stage_pending_review ? "aviso" : "acento"}>{textoEtapa(c.stage)}</Chip>
+          </p>
+          <p>
+            <span className="text-muted">Atiende: </span>
+            {conv.assigned_to ? nombres.get(conv.assigned_to) ?? "otra persona" : "nadie todavía"}
+          </p>
+          {c.follow_up_at && <p className="text-muted">Seguimiento: {fechaLarga(c.follow_up_at)}</p>}
+          {c.notes && <p className="whitespace-pre-wrap text-muted">{c.notes}</p>}
+          <p className="text-xs text-muted">Solo quien atiende esta conversación y administración pueden cambiar la ficha.</p>
+        </section>
+      )}
+
+      {puedeEditar && (
       <section className="flex flex-col gap-3">
         <EtapaSelector contactId={c.id} etapa={c.stage} />
         {c.stage_pending_review && (
@@ -52,22 +74,32 @@ export async function Ficha({
             </form>
           </div>
         )}
-        <AsignarSelector conversationId={conv.id} asignada={conv.assigned_to} equipo={equipo} />
+        {esAdmin ? (
+          <AsignarSelector conversationId={conv.id} asignada={conv.assigned_to} equipo={equipo} />
+        ) : (
+          <p className="text-sm">
+            <span className="text-muted">Atiende: </span>
+            {conv.assigned_to ? nombres.get(conv.assigned_to) ?? "tú" : "nadie todavía"}
+          </p>
+        )}
       </section>
+      )}
 
       {controlIA}
 
-      <section>
-        <DatosContactoForm
-          contactId={c.id}
-          nombre={c.name ?? ""}
-          telefono={c.phone ?? ""}
-          seguimiento={fechaInput(c.follow_up_at)}
-          notas={c.notes ?? ""}
-          motivo={c.loss_reason ?? ""}
-          mostrarMotivo={c.stage === "lost" || Boolean(c.loss_reason)}
-        />
-      </section>
+      {puedeEditar && (
+        <section>
+          <DatosContactoForm
+            contactId={c.id}
+            nombre={c.name ?? ""}
+            telefono={c.phone ?? ""}
+            seguimiento={fechaInput(c.follow_up_at)}
+            notas={c.notes ?? ""}
+            motivo={c.loss_reason ?? ""}
+            mostrarMotivo={c.stage === "lost" || Boolean(c.loss_reason)}
+          />
+        </section>
+      )}
 
       {otras.length > 0 && (
         <section>

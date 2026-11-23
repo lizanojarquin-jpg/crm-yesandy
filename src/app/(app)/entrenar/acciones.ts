@@ -1,7 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { getUsuarioActual, requireAdmin } from "@/lib/auth";
+import { requireAdmin } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { leerLecciones, pensar, type Turno } from "@/lib/ia/asesora";
@@ -25,7 +25,7 @@ export async function practicar(
   turnos: { de: "cliente" | "ia"; texto: string }[],
   incluirPropuestas: boolean,
 ): Promise<RespuestaPractica> {
-  await getUsuarioActual();
+  await requireAdmin();
   const limpios = turnos
     .slice(-30)
     .map((t) => ({ de: t.de === "ia" ? "ia" : "cliente", texto: String(t.texto ?? "").slice(0, 1500) }) as Turno)
@@ -61,9 +61,9 @@ const texto = (fd: FormData, k: string, max: number) => {
   return v || null;
 };
 
-/** El equipo propone; si la escribe un administrador queda activa de una vez. */
+/** Solo administración enseña a la IA; lo que guarda queda activo de una vez. */
 export async function crearLeccion(_prev: Estado, fd: FormData): Promise<Estado> {
-  const usuario = await getUsuarioActual();
+  const usuario = await requireAdmin();
   const kind = fd.get("kind") === "correccion" ? "correccion" : "regla";
   const content = texto(fd, "content", 2000);
   if (!content || content.length < 3) {

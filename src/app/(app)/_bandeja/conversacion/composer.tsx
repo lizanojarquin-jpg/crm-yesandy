@@ -13,7 +13,19 @@ type Props = {
   /** Solo WhatsApp fuera de las 24 h. */
   plantillas?: PlantillaOpcion[];
   primerNombre?: string;
+  /** Respuestas rápidas: {cliente} y {vendedora} se reemplazan al elegirlas. */
+  respuestas?: { id: string; title: string; body: string }[];
+  /** Nombre con el que se presenta quien responde. */
+  vendedora?: string;
 };
+
+function rellenar(texto: string, cliente: string, vendedora: string) {
+  // Sin nombre del cliente: "¡Hola {cliente}!" → "¡Hola!" y "gracias, {cliente}!" → "gracias!".
+  return texto
+    .replace(/,?\s*\{cliente\}/g, (m) => (cliente ? m.replace("{cliente}", cliente) : ""))
+    .replace(/\{vendedora\}/g, vendedora || "el equipo de Almacén Yesandy")
+    .replace(/^\s+/, "");
+}
 
 /** Reduce fotos del celular (varios MB) a JPEG de 1600 px antes de enviarlas. */
 async function comprimir(f: File): Promise<File> {
@@ -32,8 +44,19 @@ async function comprimir(f: File): Promise<File> {
   }
 }
 
-export function Composer({ conversationId, esComentario, permitePrivado, puede, aviso, plantillas, primerNombre }: Props) {
+export function Composer({
+  conversationId,
+  esComentario,
+  permitePrivado,
+  puede,
+  aviso,
+  plantillas,
+  primerNombre,
+  respuestas,
+  vendedora,
+}: Props) {
   const [texto, setTexto] = useState("");
+  const [rapidas, setRapidas] = useState(false);
   const [imagen, setImagen] = useState<{ archivo: File; vista: string } | null>(null);
   const [privado, setPrivado] = useState(false);
   const [idem, setIdem] = useState(() => crypto.randomUUID());
@@ -120,6 +143,30 @@ export function Composer({ conversationId, esComentario, permitePrivado, puede, 
         </div>
       )}
 
+      {rapidas && respuestas && respuestas.length > 0 && (
+        <ul className="mb-2 max-h-56 overflow-y-auto rounded-xl border border-border bg-background" aria-label="Respuestas rápidas">
+          {respuestas.map((r) => {
+            const lista = rellenar(r.body, primerNombre ?? "", vendedora ?? "");
+            return (
+              <li key={r.id} className="border-b border-border/70 last:border-b-0">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setTexto((t) => (t.trim() ? `${t.trimEnd()}\n${lista}` : lista));
+                    setRapidas(false);
+                    area.current?.focus();
+                  }}
+                  className="w-full px-3 py-2 text-left hover:bg-surface"
+                >
+                  <span className="block text-sm font-medium">{r.title}</span>
+                  <span className="line-clamp-2 block text-xs text-muted">{lista}</span>
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+
       {imagen && (
         <div className="mb-2 flex items-start gap-2">
           {/* eslint-disable-next-line @next/next/no-img-element -- vista previa local */}
@@ -161,6 +208,19 @@ export function Composer({ conversationId, esComentario, permitePrivado, puede, 
               </svg>
             </button>
           </>
+        )}
+        {respuestas && respuestas.length > 0 && (
+          <button
+            type="button"
+            onClick={() => setRapidas((v) => !v)}
+            aria-label="Respuestas rápidas"
+            aria-expanded={rapidas}
+            className={`flex size-11 shrink-0 items-center justify-center rounded-full hover:bg-background ${rapidas ? "text-accent" : "text-muted hover:text-foreground"}`}
+          >
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+              <path d="M13 2 3 14h9l-1 8 10-12h-9l1-8Z" />
+            </svg>
+          </button>
         )}
         <textarea
           ref={area}

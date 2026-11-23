@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { getUsuarioActual } from "@/lib/auth";
+import { requireAdmin } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { listarEquipo } from "@/lib/inbox/queries";
 import { Card } from "@/components/ui/card";
@@ -32,7 +32,8 @@ type Leccion = {
 };
 
 export default async function EntrenarPage({ searchParams }: { searchParams: Promise<{ ver?: string }> }) {
-  const usuario = await getUsuarioActual();
+  // Solo administración entrena a la IA.
+  const usuario = await requireAdmin();
   const esAdmin = usuario.rol === "admin";
   const { ver } = await searchParams;
   const pestana: Pestana = PESTANAS.some((p) => p.id === ver) ? (ver as Pestana) : "practicar";

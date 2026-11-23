@@ -11,6 +11,7 @@ import {
 import { clasificarMensaje } from "@/lib/ia/clasificador";
 import { responderConIA } from "@/lib/ia/asesora";
 import { avisarMensajeNuevo } from "@/lib/push";
+import { transcribirAudiosDeMensaje } from "@/lib/ia/transcribir";
 
 type Platform = Database["public"]["Enums"]["channel_platform"];
 type AttachmentType = Database["public"]["Enums"]["attachment_type"];
@@ -315,9 +316,19 @@ async function handleMessage(e: MessageEvent): Promise<ProcessResult> {
   });
   if (!messageId) return { status: "duplicate" };
   if (m.attachments?.length) await saveAttachments(conversationId, messageId, m.attachments);
+  // Notas de voz: se transcriben para que el equipo, el seguimiento y la IA las entiendan.
+  let transcripcion: string | null = null;
+  if (m.attachments?.some((a) => a.type === "audio")) {
+    const textos = await transcribirAudiosDeMensaje(messageId).catch((err) => {
+      console.error("transcripción", messageId, err);
+      return [];
+    });
+    transcripcion = textos.join(" ") || null;
+  }
   // Aviso al celular del equipo (no si la asesora IA está atendiendo esa conversación).
   if (inbound) {
-    await avisarMensajeNuevo(conversationId, m.text ?? null, m.attachments?.length ?? 0).catch((err) => console.error("aviso", err));
+    const texto = m.text ?? (transcripcion ? `🎤 ${transcripcion}` : null);
+    await avisarMensajeNuevo(conversationId, texto, m.attachments?.length ?? 0).catch((err) => console.error("aviso", err));
   }
   // Seguimiento automático: si el mensaje muestra pedido, pago, envío o entrega, mueve la etapa.
   await clasificarMensaje(messageId).catch((err) => console.error("clasificador", messageId, err));

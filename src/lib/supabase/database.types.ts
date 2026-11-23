@@ -240,6 +240,7 @@ export type Database = {
           message_id: string
           mime_type: string | null
           storage_path: string | null
+          transcript: string | null
           type: Database["public"]["Enums"]["attachment_type"]
         }
         Insert: {
@@ -250,6 +251,7 @@ export type Database = {
           message_id: string
           mime_type?: string | null
           storage_path?: string | null
+          transcript?: string | null
           type: Database["public"]["Enums"]["attachment_type"]
         }
         Update: {
@@ -260,6 +262,7 @@ export type Database = {
           message_id?: string
           mime_type?: string | null
           storage_path?: string | null
+          transcript?: string | null
           type?: Database["public"]["Enums"]["attachment_type"]
         }
         Relationships: [
@@ -609,6 +612,7 @@ export type Database = {
           created_at: string
           display_name: string
           id: string
+          public_name: string | null
           role: Database["public"]["Enums"]["user_role"]
           updated_at: string
         }
@@ -617,6 +621,7 @@ export type Database = {
           created_at?: string
           display_name: string
           id: string
+          public_name?: string | null
           role?: Database["public"]["Enums"]["user_role"]
           updated_at?: string
         }
@@ -625,6 +630,7 @@ export type Database = {
           created_at?: string
           display_name?: string
           id?: string
+          public_name?: string | null
           role?: Database["public"]["Enums"]["user_role"]
           updated_at?: string
         }
@@ -662,6 +668,41 @@ export type Database = {
           {
             foreignKeyName: "push_subscriptions_profile_id_fkey"
             columns: ["profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      quick_replies: {
+        Row: {
+          body: string
+          id: string
+          sort_order: number
+          title: string
+          updated_at: string
+          updated_by: string | null
+        }
+        Insert: {
+          body: string
+          id?: string
+          sort_order?: number
+          title: string
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Update: {
+          body?: string
+          id?: string
+          sort_order?: number
+          title?: string
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "quick_replies_updated_by_fkey"
+            columns: ["updated_by"]
             isOneToOne: false
             referencedRelation: "profiles"
             referencedColumns: ["id"]

@@ -49,8 +49,11 @@ export type ConversacionLista = {
 
 export const listarEquipo = cache(async () => {
   const sb = await createClient();
-  const { data } = await sb.from("profiles").select("id, display_name, role, active").order("display_name");
-  return (data ?? []).filter((p) => p.active);
+  const { data } = await sb.from("profiles").select("id, display_name, public_name, role, active").order("display_name");
+  // Adentro se ve "Ventas 1 · Hellen": el usuario y el nombre con que se presenta a los clientes.
+  return (data ?? [])
+    .filter((p) => p.active)
+    .map((p) => ({ ...p, display_name: p.public_name ? `${p.display_name} · ${p.public_name}` : p.display_name }));
 });
 
 export async function obtenerConversacion(id: string) {
@@ -104,7 +107,14 @@ export type Mensaje = {
   delivery_status: "pending" | "sent" | "delivered" | "read" | "failed";
   error_message: string | null;
   created_at: string;
-  adjuntos: { id: string; type: string; mime_type: string | null; url: string | null; detected_kind: string | null }[];
+  adjuntos: {
+    id: string;
+    type: string;
+    mime_type: string | null;
+    url: string | null;
+    detected_kind: string | null;
+    transcript: string | null;
+  }[];
   /** Etapa que la IA detectó con este mensaje como evidencia. */
   evidencia: { to_stage: import("./etiquetas").Etapa; confirmada: boolean } | null;
 };
@@ -115,14 +125,22 @@ export async function listarMensajes(conversationId: string): Promise<Mensaje[]>
     .from("messages")
     .select(
       "id, direction, sender_type, sender_profile_id, body, delivery_status, error_message, created_at, " +
-        "attachments(id, type, mime_type, storage_path, external_url, detected_kind)",
+        "attachments(id, type, mime_type, storage_path, external_url, detected_kind, transcript)",
     )
     .eq("conversation_id", conversationId)
     .order("created_at", { ascending: false })
     .limit(200)
     .returns<
       (Omit<Mensaje, "adjuntos" | "evidencia"> & {
-        attachments: { id: string; type: string; mime_type: string | null; storage_path: string | null; external_url: string | null; detected_kind: string | null }[];
+        attachments: {
+          id: string;
+          type: string;
+          mime_type: string | null;
+          storage_path: string | null;
+          external_url: string | null;
+          detected_kind: string | null;
+          transcript: string | null;
+        }[];
       })[]
     >();
   if (error) throw error;
@@ -150,6 +168,7 @@ export async function listarMensajes(conversationId: string): Promise<Mensaje[]>
         type: a.type,
         mime_type: a.mime_type,
         detected_kind: a.detected_kind,
+        transcript: a.transcript,
         // Las fotos del catálogo que envía la IA se muestran desde la tienda (son públicas).
         url: a.storage_path
           ? firmadas.get(a.storage_path) ?? null
@@ -179,6 +198,12 @@ export async function datosFicha(contactId: string, conversacionActual: string) 
       .limit(6),
   ]);
   return { otras: convs.data ?? [], etapas: etapas.data ?? [] };
+}
+
+export async function listarRespuestasRapidas() {
+  const sb = await createClient();
+  const { data } = await sb.from("quick_replies").select("id, title, body").order("sort_order").order("title");
+  return data ?? [];
 }
 
 export type Traspaso = {

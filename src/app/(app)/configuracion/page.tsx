@@ -5,6 +5,7 @@ import { CambiarPinForm } from "./cambiar-pin-form";
 import { Canales } from "./canales";
 import { Plantillas } from "./plantillas";
 import { Asesora } from "./asesora";
+import { RespuestasRapidas } from "./respuestas";
 
 export const metadata = { title: "Configuración · CRM Yesandy" };
 
@@ -57,6 +58,11 @@ export default async function ConfiguracionPage({
       <section className="mt-8">
         <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-muted">Canales</h2>
         <Canales conectado={sp.conectado} error={sp.error} />
+      </section>
+
+      <section className="mt-8">
+        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-muted">Respuestas rápidas</h2>
+        <RespuestasRapidas />
       </section>
 
       <section className="mt-8">

@@ -4,7 +4,7 @@ import { claveDia, encabezadoDia, hora } from "@/lib/formato";
 import { textoEtapa } from "@/lib/inbox/etiquetas";
 import { BotonCorregir } from "../../entrenar/corregir-form";
 
-export function Mensajes({ mensajes, nombres }: { mensajes: Mensaje[]; nombres: Map<string, string> }) {
+export function Mensajes({ mensajes, nombres, esAdmin }: { mensajes: Mensaje[]; nombres: Map<string, string>; esAdmin: boolean }) {
   if (!mensajes.length) {
     return <p className="py-10 text-center text-sm text-muted">Todavía no hay mensajes en esta conversación.</p>;
   }
@@ -19,7 +19,7 @@ export function Mensajes({ mensajes, nombres }: { mensajes: Mensaje[]; nombres: 
             </span>
           </div>
         )}
-        <Burbuja m={m} nombres={nombres} situacion={m.sender_type === "ai" ? ultimoDelCliente(mensajes, i) : ""} />
+        <Burbuja m={m} nombres={nombres} situacion={m.sender_type === "ai" ? ultimoDelCliente(mensajes, i) : ""} corregir={esAdmin} />
       </Fragment>
     );
   });
@@ -46,7 +46,17 @@ function autor(m: Mensaje, nombres: Map<string, string>) {
   return "Desde la app";
 }
 
-function Burbuja({ m, nombres, situacion }: { m: Mensaje; nombres: Map<string, string>; situacion: string }) {
+function Burbuja({
+  m,
+  nombres,
+  situacion,
+  corregir,
+}: {
+  m: Mensaje;
+  nombres: Map<string, string>;
+  situacion: string;
+  corregir: boolean;
+}) {
   const sale = m.direction === "outbound";
   const quien = autor(m, nombres);
   return (
@@ -80,7 +90,7 @@ function Burbuja({ m, nombres, situacion }: { m: Mensaje; nombres: Map<string, s
           {m.evidencia.confirmada ? " · confirmado" : " · por confirmar"}
         </p>
       )}
-      {m.sender_type === "ai" && m.body && !m.adjuntos.length && <BotonCorregir situacion={situacion} original={m.body} messageId={m.id} />}
+      {corregir && m.sender_type === "ai" && m.body && !m.adjuntos.length && <BotonCorregir situacion={situacion} original={m.body} messageId={m.id} />}
       {m.delivery_status === "failed" && (
         <p className="mt-0.5 text-xs text-danger">No se entregó{m.error_message ? `: ${m.error_message}` : ""}</p>
       )}
@@ -116,7 +126,23 @@ function Adjunto({ a }: { a: Mensaje["adjuntos"][number] }) {
     return <video src={a.url} controls preload="metadata" className="mb-1 max-h-80 rounded-xl" />;
   }
   if (a.type === "audio") {
-    return <audio src={a.url} controls preload="metadata" className="mb-1 w-64 max-w-full" />;
+    return (
+      <div className="mb-1 flex flex-col gap-1">
+        <audio controls preload="metadata" className="w-64 max-w-full">
+          {/* WhatsApp manda OGG/Opus; se declara el tipo para que el navegador elija bien. */}
+          <source src={a.url} type={a.mime_type?.split(";")[0] || "audio/ogg"} />
+        </audio>
+        <a href={a.url} download className="text-[11px] underline opacity-70">
+          Descargar audio
+        </a>
+        {a.transcript && (
+          <p className="max-w-64 text-sm italic opacity-90">
+            <span aria-hidden>🎤 </span>
+            {a.transcript}
+          </p>
+        )}
+      </div>
+    );
   }
   return (
     <a href={a.url} target="_blank" rel="noreferrer" className="mb-1 block text-sm underline">

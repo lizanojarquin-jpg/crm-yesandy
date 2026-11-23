@@ -1,11 +1,15 @@
 import { getUsuarioActual } from "@/lib/auth";
 import { cerrarSesion } from "@/app/actions";
 import Link from "next/link";
+import { redirect } from "next/navigation";
+import { nombreConfirmado } from "@/lib/nombre-cliente";
 import { NavLinks } from "./nav-links";
 import { FranjaAvisos } from "./avisos/gestor";
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
   const usuario = await getUsuarioActual();
+  // Ventas confirma al entrar con qué nombre se presenta a los clientes.
+  if (usuario.rol !== "admin" && !(await nombreConfirmado(usuario.id))) redirect("/bienvenida");
 
   return (
     <div className="flex min-h-dvh flex-col md:flex-row">
@@ -54,7 +58,10 @@ function UsuarioPie({ nombre, rol }: { nombre: string; rol: string }) {
     <div className="border-t border-border px-5 py-4">
       <p className="text-sm font-medium">{nombre}</p>
       <p className="text-xs text-muted">{rol === "admin" ? "Administrador" : "Vendedora"}</p>
-      <Link href="/avisos" className="mt-3 flex items-center gap-2 text-sm text-muted hover:text-foreground">
+      <Link href="/bienvenida" className="mt-3 block text-sm text-muted hover:text-foreground">
+        Mi nombre para clientes
+      </Link>
+      <Link href="/avisos" className="mt-2 flex items-center gap-2 text-sm text-muted hover:text-foreground">
         <IconoCampana /> Avisos
       </Link>
       <form action={cerrarSesion} className="mt-2">

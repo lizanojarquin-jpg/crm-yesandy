@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { getUsuarioActual } from "@/lib/auth";
 import { Card } from "@/components/ui/card";
 import { GestorAvisos } from "./gestor";
@@ -14,6 +15,12 @@ export default async function AvisosPage() {
       </p>
       <Card className="mt-4">
         <GestorAvisos />
+      </Card>
+      <Card className="mt-4 flex items-center justify-between gap-3 text-sm">
+        <p>Nombre con el que te presentas a los clientes</p>
+        <Link href="/bienvenida" className="shrink-0 font-medium text-accent">
+          Cambiar
+        </Link>
       </Card>
       <Card className="mt-4 flex flex-col gap-1.5 text-sm">
         <p className="font-medium">Qué avisa</p>
