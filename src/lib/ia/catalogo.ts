@@ -42,7 +42,20 @@ export function slug(t: string): string {
   );
 }
 
-const absoluta = (ruta: string) => new URL(encodeURI(ruta), TIENDA).toString();
+/**
+ * Dirección completa de una foto. La tienda a veces ya trae el nombre codificado
+ * ("Cat%C3%A1logo%20…png") y a veces no ("foto con espacio.jpg"): se decodifica primero
+ * para no codificarlo dos veces (eso daba direcciones inexistentes: "%25C3%25A1").
+ */
+export function absoluta(ruta: string) {
+  let limpia = ruta;
+  try {
+    limpia = decodeURI(ruta);
+  } catch {
+    // nombre con un % suelto: se usa tal cual
+  }
+  return new URL(encodeURI(limpia), TIENDA).toString();
+}
 
 export async function leerCatalogoWeb() {
   const res = await fetch(ARCHIVO, { cache: "no-store", signal: AbortSignal.timeout(15_000) });

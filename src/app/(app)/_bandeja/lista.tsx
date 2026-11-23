@@ -23,15 +23,57 @@ export async function ListaConversaciones({
   const nombres = new Map(equipo.map((p) => [p.id, p.display_name]));
   const q = qs(filtros);
   const enlace = (cambios: Partial<Filtros>) => conQs(ruta, qs(filtros, cambios));
-  const hayFiltros = Boolean(filtros.canal || filtros.etapa || filtros.ver || filtros.cerradas);
+  const hayFiltros = Boolean(filtros.canal || filtros.etapa || filtros.ver || filtros.cerradas || filtros.buscar);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="flex flex-col gap-2 border-b border-border px-4 pt-4 pb-3">
         <div className="flex items-baseline justify-between">
-          <h1 className="text-lg font-semibold">{filtros.cerradas ? "Cerradas" : "Bandeja"}</h1>
+          <h1 className="text-lg font-semibold">{filtros.buscar ? "Búsqueda" : filtros.cerradas ? "Cerradas" : "Bandeja"}</h1>
           <span className="text-xs text-muted">{convs.length === 150 ? "150+" : convs.length} conversaciones</span>
         </div>
+        {/* Buscar por nombre o teléfono: conserva los demás filtros. */}
+        <form action={ruta} method="get" role="search" className="relative">
+          {filtros.canal && <input type="hidden" name="canal" value={filtros.canal} />}
+          {filtros.etapa && <input type="hidden" name="etapa" value={filtros.etapa} />}
+          {filtros.ver && <input type="hidden" name="ver" value={filtros.ver} />}
+          <label htmlFor="buscar-chat" className="sr-only">
+            Buscar chat por nombre o teléfono
+          </label>
+          <svg
+            className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-muted"
+            width="16"
+            height="16"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            aria-hidden
+          >
+            <circle cx="11" cy="11" r="7" />
+            <path d="m20 20-3.5-3.5" />
+          </svg>
+          <input
+            id="buscar-chat"
+            name="buscar"
+            type="search"
+            defaultValue={filtros.buscar ?? ""}
+            key={filtros.buscar ?? ""}
+            placeholder="Buscar por nombre o teléfono"
+            enterKeyHint="search"
+            className="h-10 w-full rounded-full border border-border bg-background pr-9 pl-9 text-base outline-none focus:border-accent"
+          />
+          {filtros.buscar && (
+            <Link
+              href={enlace({ buscar: undefined })}
+              aria-label="Quitar búsqueda"
+              className="absolute top-1/2 right-3 -translate-y-1/2 text-sm text-muted hover:text-foreground"
+            >
+              ✕
+            </Link>
+          )}
+        </form>
         <div className="-mx-4 flex gap-1.5 overflow-x-auto px-4 pb-0.5 [scrollbar-width:none]">
           <ChipEnlace href={enlace({ ver: undefined })} activo={!filtros.ver}>Todas</ChipEnlace>
           <ChipEnlace href={enlace({ ver: filtros.ver === "sin_leer" ? undefined : "sin_leer" })} activo={filtros.ver === "sin_leer"}>
@@ -64,10 +106,12 @@ export async function ListaConversaciones({
 
       {convs.length === 0 ? (
         <EmptyState
-          titulo={hayFiltros ? "Nada con estos filtros" : "Todavía no hay conversaciones"}
+          titulo={filtros.buscar ? `Ningún chat con «${filtros.buscar}»` : hayFiltros ? "Nada con estos filtros" : "Todavía no hay conversaciones"}
           descripcion={
             hayFiltros
-              ? "Prueba quitando algún filtro."
+              ? filtros.buscar
+                ? "Prueba con otra parte del nombre o con el teléfono."
+                : "Prueba quitando algún filtro."
               : "Los mensajes y comentarios de WhatsApp, Facebook, Instagram y TikTok aparecen aquí al llegar."
           }
         />

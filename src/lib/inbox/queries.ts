@@ -14,9 +14,14 @@ export async function listarConversaciones(f: Filtros, usuarioId: string) {
         "contacto:contacts!inner(id, name, phone, stage, stage_pending_review, contact_identities(handle)), " +
         "canal:channel_accounts!inner(platform)",
     )
-    .eq("status", f.cerradas ? "closed" : "open")
     .order("last_message_at", { ascending: false, nullsFirst: false })
     .limit(150);
+  if (f.buscar) {
+    // Al buscar se miran abiertas y cerradas, por nombre o teléfono del cliente.
+    q = q.or(`name.ilike.*${f.buscar}*,phone.ilike.*${f.buscar}*`, { referencedTable: "contacto" });
+  } else {
+    q = q.eq("status", f.cerradas ? "closed" : "open");
+  }
   if (f.canal) q = q.eq("canal.platform", f.canal);
   if (f.etapa) q = q.eq("contacto.stage", f.etapa);
   if (f.ver === "sin_leer") q = q.gt("unread_count", 0);

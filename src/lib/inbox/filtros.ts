@@ -5,7 +5,15 @@ export type Filtros = {
   etapa?: Etapa;
   ver?: "sin_leer" | "mias" | "comentarios";
   cerradas?: boolean;
+  /** Búsqueda por nombre o teléfono del cliente (abiertas y cerradas). */
+  buscar?: string;
 };
+
+/** Texto de búsqueda seguro para el filtro de la base de datos (sin comas, paréntesis ni comodines). */
+function limpiarBusqueda(v: string | undefined) {
+  const t = (v ?? "").replace(/[,()*%\\:"]/g, " ").replace(/\s+/g, " ").trim().slice(0, 60);
+  return t.length >= 2 ? t : undefined;
+}
 
 type SP = Record<string, string | string[] | undefined>;
 
@@ -20,6 +28,7 @@ export function leerFiltros(sp: SP): Filtros {
     etapa: ETAPAS.some((e) => e.valor === etapa) ? (etapa as Etapa) : undefined,
     ver: ver === "sin_leer" || ver === "mias" || ver === "comentarios" ? ver : undefined,
     cerradas: uno(sp.estado) === "cerradas" || undefined,
+    buscar: limpiarBusqueda(uno(sp.buscar)),
   };
 }
 
@@ -31,6 +40,7 @@ export function qs(f: Filtros, cambios: Partial<Filtros> = {}) {
   if (x.etapa) p.set("etapa", x.etapa);
   if (x.ver) p.set("ver", x.ver);
   if (x.cerradas) p.set("estado", "cerradas");
+  if (x.buscar) p.set("buscar", x.buscar);
   return p.toString();
 }
 

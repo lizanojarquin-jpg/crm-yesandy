@@ -11,6 +11,7 @@ import { avisarFallaIA, avisarTraspaso } from "@/lib/push";
 const MODELO = process.env.OPENROUTER_MODEL_ASESORA || "google/gemini-2.5-flash";
 const RESPALDO = ["openai/gpt-4.1-mini"];
 const ESPERA_MS = 8_000; // los clientes suelen mandar varios mensajes seguidos
+const RESPONDER_A_LOS_MS = 30_000; // pedido de Allan (23-nov): responder ~30 s después, para darle aire al cliente
 const EDAD_MAXIMA_MS = 10 * 60_000; // no contestar mensajes viejos (reprocesos, historial)
 const MAX_VUELTAS = 4;
 const MAX_MENSAJES_IA_DIA = 25;
@@ -513,6 +514,11 @@ export async function responderConIA(messageId: string, opciones: { esperaMs?: n
     }
 
     d = await pensar({ turnos, canal: conv.canal.platform, nombre: conv.contacto.name, etapa: conv.contacto.stage });
+
+    // Para que no se vea automatizado: la respuesta sale unos 30 s después del mensaje del cliente
+    // (la espera inicial y lo que tardó en pensar ya cuentan).
+    const faltan = RESPONDER_A_LOS_MS - (Date.now() - new Date(msg.created_at).getTime());
+    if (faltan > 0 && !opciones.esperaMs) await new Promise((r) => setTimeout(r, Math.min(faltan, RESPONDER_A_LOS_MS)));
 
     // Antes de enviar: si mientras pensaba llegó otro mensaje o alguien tomó la conversación, no se envía.
     const { data: ultimo2 } = await db
