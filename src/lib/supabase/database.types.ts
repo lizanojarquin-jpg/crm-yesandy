@@ -536,13 +536,6 @@ export type Database = {
         }
         Relationships: [
           {
-            foreignKeyName: "conversations_ai_revived_message_id_fkey"
-            columns: ["ai_revived_message_id"]
-            isOneToOne: false
-            referencedRelation: "messages"
-            referencedColumns: ["id"]
-          },
-          {
             foreignKeyName: "conversations_assigned_to_fkey"
             columns: ["assigned_to"]
             isOneToOne: false
