@@ -4,7 +4,7 @@ import type { NextConfig } from "next";
 // Cache Components: cada página se renderiza por solicitud.
 const nextConfig: NextConfig = {
   experimental: {
-    // Fotos enviadas desde la bandeja (se comprimen en el navegador; 4 MB de margen).
+    // Las fotos y audios suben directo al almacenamiento; esto queda de margen para formularios.
     serverActions: { bodySizeLimit: "4mb" },
   },
   // Cabeceras de seguridad para todo el sitio y el service worker siempre fresco.
@@ -17,7 +17,7 @@ const nextConfig: NextConfig = {
           { key: "X-Frame-Options", value: "DENY" },
           { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
           { key: "Strict-Transport-Security", value: "max-age=63072000; includeSubDomains" },
-          { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=()" },
+          { key: "Permissions-Policy", value: "camera=(), microphone=(self), geolocation=()" },
         ],
       },
       {

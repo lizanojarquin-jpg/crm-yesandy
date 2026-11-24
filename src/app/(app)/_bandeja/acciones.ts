@@ -15,13 +15,25 @@ import {
 } from "@/lib/zernio/client";
 import { contarVariables, cuerpo, plantillasDe, rellenar } from "@/lib/inbox/plantillas";
 import { clasificarMensaje } from "@/lib/ia/clasificador";
+import { transcribirAudiosDeMensaje } from "@/lib/ia/transcribir";
 import { avisarLiberado } from "@/lib/push";
 import { ventanaMensajes } from "@/lib/inbox/ventana";
 import { ETAPAS, type Etapa } from "@/lib/inbox/etiquetas";
 
 export type Estado = { ok: boolean; mensaje: string; n?: number } | null;
 
-const MAX_IMAGEN = 4 * 1024 * 1024;
+const MAX_FOTOS = 10;
+const MAX_IMAGEN = 5 * 1024 * 1024; // límite de WhatsApp
+const MAX_AUDIO = 16 * 1024 * 1024; // límite de WhatsApp
+/** Canales que reciben audios por mensaje directo (TikTok solo acepta texto o una foto). */
+const CANALES_AUDIO = ["whatsapp", "facebook", "instagram"];
+/** Tipo de archivo que se guarda, según la extensión (no se confía en lo que diga el navegador). */
+const FORMATOS: Record<string, { tipo: "image" | "audio"; mime: string }> = {
+  jpg: { tipo: "image", mime: "image/jpeg" },
+  png: { tipo: "image", mime: "image/png" },
+  m4a: { tipo: "audio", mime: "audio/mp4" },
+};
+const EXTENSION: Record<string, string> = { "image/jpeg": "jpg", "image/png": "png", "audio/mp4": "m4a" };
 
 /** Conversación con los datos que hacen falta para enviar. La lectura pasa por RLS. */
 async function cargar(conversationId: string) {
@@ -87,7 +99,63 @@ function explicar(e: unknown): string {
   return e instanceof Error ? `No se pudo enviar. ${e.message}` : "No se pudo enviar.";
 }
 
-/** Envía un mensaje directo o responde un comentario desde el CRM. */
+export type Subida = { ok: true; subidas: { ruta: string; token: string }[] } | { ok: false; mensaje: string };
+
+/**
+ * Prepara la subida de fotos o de un audio: el navegador los sube directo al almacenamiento
+ * (sin pasar por el servidor, que tiene límite de tamaño) y después llama a `enviar` con las rutas.
+ */
+export async function prepararSubida(
+  conversationId: string,
+  archivos: { tipo: "image" | "audio"; mime: string; tamano: number }[],
+): Promise<Subida> {
+  const usuario = await getUsuarioActual();
+  const conv = await cargar(conversationId);
+  if (!conv) return { ok: false, mensaje: "La conversación no existe." };
+  const bloqueo = sinPermisoParaResponder(usuario, conv);
+  if (bloqueo) return { ok: false, mensaje: bloqueo.mensaje };
+  if (conv.kind !== "dm") return { ok: false, mensaje: "A los comentarios solo se responde con texto." };
+  const v = ventanaMensajes(conv.canal.platform, conv.last_inbound_at);
+  if (!v.puede) return { ok: false, mensaje: v.aviso ?? "No se puede escribir en esta conversación." };
+
+  const audios = archivos.filter((a) => a.tipo === "audio");
+  if (!archivos.length) return { ok: false, mensaje: "No hay archivos para enviar." };
+  if (archivos.length - audios.length > MAX_FOTOS) return { ok: false, mensaje: `Se pueden enviar hasta ${MAX_FOTOS} fotos a la vez.` };
+  if (audios.length && (audios.length > 1 || archivos.length > 1)) return { ok: false, mensaje: "El audio se envía solo." };
+  if (audios.length && !CANALES_AUDIO.includes(conv.canal.platform)) {
+    return { ok: false, mensaje: "Los audios solo se pueden enviar por WhatsApp, Messenger e Instagram." };
+  }
+
+  const admin = createAdminClient();
+  const subidas: { ruta: string; token: string }[] = [];
+  for (const a of archivos) {
+    const ext = EXTENSION[a.mime.split(";")[0]];
+    if (!ext || FORMATOS[ext].tipo !== a.tipo) {
+      return {
+        ok: false,
+        mensaje: a.tipo === "audio" ? "Ese formato de audio no se puede enviar." : "Solo se pueden enviar fotos JPG o PNG.",
+      };
+    }
+    if (a.tamano <= 0 || a.tamano > (a.tipo === "audio" ? MAX_AUDIO : MAX_IMAGEN)) {
+      return { ok: false, mensaje: a.tipo === "audio" ? "El audio pesa demasiado (máximo 16 MB)." : "Cada foto puede pesar hasta 5 MB." };
+    }
+    const ruta = `${conv.id}/enviados/${crypto.randomUUID()}.${ext}`;
+    const { data, error } = await admin.storage.from("attachments").createSignedUploadUrl(ruta);
+    if (error || !data) return { ok: false, mensaje: "No se pudo preparar la subida. Intenta de nuevo." };
+    subidas.push({ ruta, token: data.token });
+  }
+  return { ok: true, subidas };
+}
+
+/** Rutas subidas con `prepararSubida`: solo se aceptan las de esta conversación. */
+function leerAdjuntos(conversationId: string, fd: FormData) {
+  const patron = new RegExp(`^${conversationId}/enviados/[0-9a-f-]{36}\\.(jpg|png|m4a)$`);
+  const rutas = fd.getAll("adjunto").map(String);
+  if (rutas.some((r) => !patron.test(r))) return null;
+  return rutas.map((ruta) => ({ ruta, ...FORMATOS[ruta.split(".").pop()!] }));
+}
+
+/** Envía un mensaje directo (texto, varias fotos o un audio) o responde un comentario desde el CRM. */
 export async function enviar(conversationId: string, _prev: Estado, fd: FormData): Promise<Estado> {
   const usuario = await getUsuarioActual();
   const conv = await cargar(conversationId);
@@ -96,24 +164,26 @@ export async function enviar(conversationId: string, _prev: Estado, fd: FormData
   if (bloqueo) return bloqueo;
 
   const texto = String(fd.get("mensaje") ?? "").trim();
-  const archivo = fd.get("imagen");
-  const imagen = archivo instanceof File && archivo.size > 0 ? archivo : null;
+  const adjuntos = leerAdjuntos(conv.id, fd);
+  if (!adjuntos) return { ok: false, mensaje: "Hay un archivo que no corresponde a esta conversación." };
+  const fotos = adjuntos.filter((a) => a.tipo === "image");
+  const audio = adjuntos.find((a) => a.tipo === "audio");
   const privado = fd.get("privado") === "1";
   const idem = String(fd.get("idem") ?? "") || undefined;
 
-  if (!texto && !imagen) return { ok: false, mensaje: "Escribe un mensaje o adjunta una imagen." };
+  if (!texto && !adjuntos.length) return { ok: false, mensaje: "Escribe un mensaje o adjunta una foto." };
   if (texto.length > 4000) return { ok: false, mensaje: "El mensaje es demasiado largo." };
-  if (imagen && (!imagen.type.startsWith("image/") || imagen.size > MAX_IMAGEN)) {
-    return { ok: false, mensaje: "Solo se pueden enviar imágenes de hasta 4 MB." };
-  }
+  if (fotos.length > MAX_FOTOS) return { ok: false, mensaje: `Se pueden enviar hasta ${MAX_FOTOS} fotos a la vez.` };
+  if (audio && (adjuntos.length > 1 || texto)) return { ok: false, mensaje: "El audio se envía solo." };
 
   const admin = createAdminClient();
   const accountId = conv.canal.zernio_account_id;
   const platform = conv.canal.platform;
+  let enviadas = 0;
 
   try {
     if (conv.kind === "comment") {
-      if (imagen) return { ok: false, mensaje: "A los comentarios solo se responde con texto." };
+      if (adjuntos.length) return { ok: false, mensaje: "A los comentarios solo se responde con texto." };
       // Se responde al último comentario del cliente en este hilo.
       const { data: ultimo } = await admin
         .from("messages")
@@ -156,53 +226,69 @@ export async function enviar(conversationId: string, _prev: Estado, fd: FormData
       const v = ventanaMensajes(platform, conv.last_inbound_at);
       if (!v.puede) return { ok: false, mensaje: v.aviso ?? "No se puede escribir en esta conversación." };
 
-      let rutaImagen: string | null = null;
-      let urlImagen: string | undefined;
-      if (imagen) {
-        rutaImagen = `${conv.id}/enviados/${crypto.randomUUID()}.${imagen.type === "image/png" ? "png" : "jpg"}`;
-        const { error } = await admin.storage
-          .from("attachments")
-          .upload(rutaImagen, await imagen.arrayBuffer(), { contentType: imagen.type });
-        if (error) return { ok: false, mensaje: "No se pudo subir la imagen." };
-        // Enlace temporal para que la plataforma descargue la imagen.
-        const { data: firmada } = await admin.storage.from("attachments").createSignedUrl(rutaImagen, 60 * 60);
-        urlImagen = firmada?.signedUrl;
-        if (!urlImagen) return { ok: false, mensaje: "No se pudo preparar la imagen." };
+      if (audio && !CANALES_AUDIO.includes(platform)) {
+        return { ok: false, mensaje: "Los audios solo se pueden enviar por WhatsApp, Messenger e Instagram." };
       }
 
-      const base = {
-        accountId,
-        humanAgentTag: v.etiquetaAgente,
+      // Enlaces temporales para que la plataforma descargue cada archivo (falla si no se subió).
+      const urls = new Map<string, string>();
+      if (adjuntos.length) {
+        const { data: firmadas } = await admin.storage.from("attachments").createSignedUrls(
+          adjuntos.map((a) => a.ruta),
+          60 * 60,
+        );
+        for (const f of firmadas ?? []) if (f.signedUrl && !f.error && f.path) urls.set(f.path, f.signedUrl);
+        if (adjuntos.some((a) => !urls.has(a.ruta))) return { ok: false, mensaje: "No se pudo subir el archivo. Intenta de nuevo." };
+      }
+
+      const base = { accountId, humanAgentTag: v.etiquetaAgente };
+      // Con la misma llave, un reintento no repite lo que ya salió.
+      const llave = (s: string) => (idem ? (adjuntos.length ? `${idem}-${s}` : idem) : undefined);
+      const mandarTexto = async () => {
+        const r = await sendInboxMessage(conv.external_conversation_id, { ...base, message: texto, idempotencyKey: llave("txt") });
+        await guardarSaliente(admin, conv.id, usuario.id, texto, r.messageId);
       };
-      if (platform === "whatsapp" || !imagen || !texto) {
-        // WhatsApp acepta imagen con texto en un solo mensaje.
+      const mandarArchivo = async (a: (typeof adjuntos)[number], i: number, conTexto: boolean) => {
         const r = await sendInboxMessage(conv.external_conversation_id, {
           ...base,
-          message: texto || undefined,
-          attachmentUrl: urlImagen,
-          idempotencyKey: idem,
+          message: conTexto ? texto : undefined,
+          attachmentUrl: urls.get(a.ruta),
+          attachmentType: a.tipo,
+          idempotencyKey: llave(`${a.tipo === "audio" ? "a" : "f"}${i}`),
         });
-        const id = await guardarSaliente(admin, conv.id, usuario.id, texto || null, r.messageId);
-        if (rutaImagen && id) await guardarAdjunto(admin, id, rutaImagen, imagen!.type);
+        const id = await guardarSaliente(admin, conv.id, usuario.id, conTexto ? texto : null, r.messageId, undefined, a.tipo !== "audio");
+        if (id) {
+          await guardarAdjunto(admin, id, a.ruta, a.mime, a.tipo);
+          // El audio se transcribe para que se pueda leer y el seguimiento lo entienda ("ya va en camino").
+          if (a.tipo === "audio") {
+            after(async () => {
+              await transcribirAudiosDeMensaje(id).catch((e) => console.error("transcribir saliente", e));
+              await clasificarMensaje(id).catch((e) => console.error("clasificador", e));
+            });
+          }
+        }
+        enviadas++;
+      };
+
+      if (audio) {
+        await mandarArchivo(audio, 0, false);
+      } else if (platform === "whatsapp") {
+        // WhatsApp: el texto va como pie de la primera foto.
+        if (!fotos.length) await mandarTexto();
+        for (const [i, f] of fotos.entries()) await mandarArchivo(f, i, i === 0 && !!texto);
       } else {
-        // Facebook, Instagram y TikTok: la imagen y el texto salen como dos mensajes.
-        const ri = await sendInboxMessage(conv.external_conversation_id, {
-          ...base,
-          attachmentUrl: urlImagen,
-          idempotencyKey: idem ? `${idem}-img` : undefined,
-        });
-        const idImg = await guardarSaliente(admin, conv.id, usuario.id, null, ri.messageId);
-        if (rutaImagen && idImg) await guardarAdjunto(admin, idImg, rutaImagen, imagen.type);
-        const rt = await sendInboxMessage(conv.external_conversation_id, {
-          ...base,
-          message: texto,
-          idempotencyKey: idem ? `${idem}-txt` : undefined,
-        });
-        await guardarSaliente(admin, conv.id, usuario.id, texto, rt.messageId);
+        // Facebook, Instagram y TikTok no juntan foto y texto: primero el texto y después las fotos.
+        if (texto) await mandarTexto();
+        for (const [i, f] of fotos.entries()) await mandarArchivo(f, i, false);
       }
     }
   } catch (e) {
-    return { ok: false, mensaje: explicar(e) };
+    const falla = explicar(e);
+    if (fotos.length > 1 && enviadas > 0) {
+      refresh();
+      return { ok: false, mensaje: `Se enviaron ${enviadas} de ${fotos.length} fotos. ${falla} Toca enviar otra vez para mandar las que faltan.` };
+    }
+    return { ok: false, mensaje: falla };
   }
 
   // Si la IA había pasado la conversación, quien responde la atiende. Si la IA la tenía
@@ -280,6 +366,7 @@ async function guardarSaliente(
   body: string | null,
   externalId: string,
   replyTo?: string,
+  clasificar = true,
 ): Promise<string | null> {
   const { data, error } = await admin
     .from("messages")
@@ -300,14 +387,14 @@ async function guardarSaliente(
     .single();
   if (error) throw error;
   // "Voy a preparar tu pedido", guías, etc.: se revisa después de responder, sin hacer esperar.
-  if (data?.id) after(() => clasificarMensaje(data.id).catch((e) => console.error("clasificador", e)));
+  if (data?.id && clasificar) after(() => clasificarMensaje(data.id).catch((e) => console.error("clasificador", e)));
   return data?.id ?? null;
 }
 
-async function guardarAdjunto(admin: Admin, messageId: string, ruta: string, mime: string) {
+async function guardarAdjunto(admin: Admin, messageId: string, ruta: string, mime: string, tipo: "image" | "audio" = "image") {
   const { count } = await admin.from("attachments").select("id", { count: "exact", head: true }).eq("message_id", messageId);
   if (count) return; // el webhook ya lo guardó
-  await admin.from("attachments").insert({ message_id: messageId, type: "image", mime_type: mime, storage_path: ruta });
+  await admin.from("attachments").insert({ message_id: messageId, type: tipo, mime_type: mime, storage_path: ruta });
 }
 
 // ---------------------------------------------------------------------
