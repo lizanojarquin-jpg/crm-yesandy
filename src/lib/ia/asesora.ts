@@ -562,11 +562,36 @@ export async function historialParaIA(conversationId: string) {
   const db = createAdminClient();
   const { data: recientes } = await db
     .from("messages")
-    .select("id, direction, sender_type, body, created_at, attachments(type, storage_path, external_url, transcript)")
+    .select(
+      "id, direction, sender_type, body, created_at, external_message_id, reply_to_external_id, location, " +
+        "attachments(type, storage_path, external_url, transcript)",
+    )
     .eq("conversation_id", conversationId)
     .order("created_at", { ascending: false })
-    .limit(30);
+    .limit(30)
+    .returns<
+      {
+        id: string;
+        direction: "inbound" | "outbound";
+        sender_type: "customer" | "ai" | "agent";
+        body: string | null;
+        created_at: string;
+        external_message_id: string | null;
+        reply_to_external_id: string | null;
+        location: { latitude: number; longitude: number; name?: string; address?: string } | null;
+        attachments: { type: string; storage_path: string | null; external_url: string | null; transcript: string | null }[];
+      }[]
+    >();
   const hist = (recientes ?? []).reverse();
+  const porExterno = new Map(hist.filter((m) => m.external_message_id).map((m) => [m.external_message_id!, m]));
+  /** "(responde a: …)" cuando el cliente citó un mensaje, para que la IA sepa de qué producto habla. */
+  const citaParaIA = (externo: string | null) => {
+    if (!externo) return null;
+    const q = porExterno.get(externo);
+    if (!q) return "(responde a un mensaje anterior)";
+    const que = q.body?.trim().slice(0, 160) || (q.attachments.some((a) => a.type === "image") ? "una foto" : "un mensaje");
+    return `(responde a ${q.direction === "inbound" ? "su propio mensaje" : "lo que le enviamos"}: «${que}»)`;
+  };
 
   // Fotos del cliente con enlace temporal para que el modelo las vea.
   const rutas = hist.flatMap((m) =>
@@ -581,7 +606,16 @@ export async function historialParaIA(conversationId: string) {
     de: m.direction === "inbound" ? "cliente" : m.sender_type === "ai" ? "ia" : "equipo",
     // Las notas de voz transcritas se leen como texto.
     texto:
-      [m.body, ...m.attachments.filter((a) => a.transcript).map((a) => `(nota de voz) ${a.transcript}`)].filter(Boolean).join("\n") || null,
+      [
+        citaParaIA(m.reply_to_external_id),
+        m.location
+          ? `(envió su ubicación: ${m.location.name ? `${m.location.name}, ` : ""}${m.location.address ? `${m.location.address}, ` : ""}` +
+            `https://www.google.com/maps/search/?api=1&query=${m.location.latitude},${m.location.longitude})`
+          : m.body,
+        ...m.attachments.filter((a) => a.transcript).map((a) => `(nota de voz) ${a.transcript}`),
+      ]
+        .filter(Boolean)
+        .join("\n") || null,
     imagenes: m.attachments
       .filter((a) => a.type === "image")
       .map((a) => (a.storage_path ? firmadas.get(a.storage_path) : m.direction === "outbound" ? a.external_url : null))

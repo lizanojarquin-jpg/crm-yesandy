@@ -97,6 +97,13 @@ export type ZernioListedMessage = {
   sentAt?: string | null;
   createdAt?: string | null;
   deliveryStatus?: string | null;
+  /** No viene en el webhook: solo en la lista de mensajes. */
+  metadata?: {
+    /** Mensaje que el cliente citó al responder (el "responder" de WhatsApp, Messenger e Instagram). */
+    quotedMessageId?: string | null;
+    /** Ubicación que mandó el cliente (WhatsApp). */
+    location?: { latitude?: number; longitude?: number; name?: string | null; address?: string | null } | null;
+  } | null;
 };
 
 // ---------- Llamadas ----------
@@ -133,6 +140,14 @@ export async function listMessages(conversationId: string, accountId: string, cu
     `/inbox/conversations/${encodeURIComponent(conversationId)}/messages`,
     { query: { accountId, limit: 100, cursor } },
   );
+}
+
+/** Los mensajes más recientes de la conversación (del más nuevo al más viejo). */
+export async function listRecentMessages(conversationId: string, accountId: string, limit = 20) {
+  const r = await zernio<{ messages: ZernioListedMessage[] }>(`/inbox/conversations/${encodeURIComponent(conversationId)}/messages`, {
+    query: { accountId, limit, sortOrder: "desc" },
+  });
+  return r.messages ?? [];
 }
 
 // ---------- Envío ----------

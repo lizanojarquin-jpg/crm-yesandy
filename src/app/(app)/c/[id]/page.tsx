@@ -45,7 +45,7 @@ export default async function ConversacionPage({
   const conv = await obtenerConversacion(id);
   if (!conv) notFound();
   const [mensajes, equipo, traspaso, ajustesIA, respuestas] = await Promise.all([
-    listarMensajes(id),
+    listarMensajes(id, { citas: conv.kind === "dm" }),
     listarEquipo(),
     traspasoAbierto(id),
     leerAjustesIA(),

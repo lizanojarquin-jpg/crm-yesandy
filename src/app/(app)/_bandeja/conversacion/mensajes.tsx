@@ -59,10 +59,12 @@ function Burbuja({
 }) {
   const sale = m.direction === "outbound";
   const quien = autor(m, nombres);
+  // La ubicación llega con el texto "📍 Location": se muestra la tarjeta en su lugar.
+  const texto = m.ubicacion && /^📍\s*location$/i.test(m.body?.trim() ?? "") ? null : m.body;
   return (
-    <div className={`flex flex-col ${sale ? "items-end" : "items-start"}`}>
+    <div id={`m-${m.id}`} className={`flex scroll-mt-24 flex-col ${sale ? "items-end" : "items-start"} [&:target>div:first-child]:ring-2 [&:target>div:first-child]:ring-amber-400`}>
       <div
-        className={`max-w-[85%] rounded-2xl px-3 py-2 text-[15px] leading-snug shadow-[0_1px_0_rgba(0,0,0,0.04)] sm:max-w-[70%] ${
+        className={`max-w-[85%] rounded-2xl px-3 py-2 text-[15px] leading-snug shadow-[0_1px_0_rgba(0,0,0,0.04)] transition sm:max-w-[70%] ${
           sale
             ? m.sender_type === "ai"
               ? "rounded-br-md border border-accent/25 bg-accent/10 text-foreground"
@@ -70,10 +72,12 @@ function Burbuja({
             : "rounded-bl-md border border-border bg-surface text-foreground"
         }`}
       >
+        {m.cita && <CitaMensaje c={m.cita} />}
+        {m.ubicacion && <Ubicacion u={m.ubicacion} />}
         {m.adjuntos.map((a) => (
           <Adjunto key={a.id} a={a} />
         ))}
-        {m.body && <p className="break-words whitespace-pre-wrap">{m.body}</p>}
+        {texto && <p className="break-words whitespace-pre-wrap">{texto}</p>}
         <p
           className={`mt-1 flex items-center justify-end gap-1 text-[11px] ${
             sale && m.sender_type !== "ai" ? "text-accent-foreground/75" : "text-muted"
@@ -94,6 +98,66 @@ function Burbuja({
       {m.delivery_status === "failed" && (
         <p className="mt-0.5 text-xs text-danger">No se entregó{m.error_message ? `: ${m.error_message}` : ""}</p>
       )}
+    </div>
+  );
+}
+
+const TIPO_CITADO: Record<string, string> = { image: "📷 Foto", sticker: "Sticker", audio: "🎤 Audio", video: "🎬 Video", file: "📎 Archivo" };
+
+/** El mensaje al que responde (como el "responder" de WhatsApp). Toca para ir a él. */
+function CitaMensaje({ c }: { c: NonNullable<Mensaje["cita"]> }) {
+  const quien = c.deCliente === null ? "Mensaje anterior" : c.deCliente ? "Cliente" : "Almacén Yesandy";
+  const texto = c.texto ?? (c.tipo ? TIPO_CITADO[c.tipo] ?? "Adjunto" : c.id ? "Mensaje" : "Un mensaje que no está en el CRM");
+  const contenido = (
+    <>
+      <span className="min-w-0 flex-1">
+        <span className="block text-[12px] font-semibold opacity-80">↩ {quien}</span>
+        <span className="line-clamp-3 block text-[13px] break-words whitespace-pre-wrap opacity-90">{texto}</span>
+      </span>
+      {c.foto && (
+        // eslint-disable-next-line @next/next/no-img-element -- URL firmada y temporal de Supabase
+        <img src={c.foto} alt="Foto citada" loading="lazy" className="size-12 shrink-0 rounded-md object-cover" />
+      )}
+    </>
+  );
+  const clase = "-mx-1 mb-1.5 flex items-center gap-2 rounded-lg border-l-4 border-current/40 bg-black/5 px-2 py-1.5 dark:bg-white/10";
+  return c.id ? (
+    <a href={`#m-${c.id}`} className={`${clase} hover:bg-black/10 dark:hover:bg-white/15`} aria-label={`Responde a: ${texto}`}>
+      {contenido}
+    </a>
+  ) : (
+    <div className={clase}>{contenido}</div>
+  );
+}
+
+/** Ubicación que mandó el cliente: mapa y botones para abrirla en Google Maps o Waze. */
+function Ubicacion({ u }: { u: NonNullable<Mensaje["ubicacion"]> }) {
+  const ll = `${u.latitude},${u.longitude}`;
+  const d = 0.004;
+  const bbox = [u.longitude - d, u.latitude - d * 0.6, u.longitude + d, u.latitude + d * 0.6].join(",");
+  const boton = "inline-flex h-8 flex-1 items-center justify-center rounded-lg bg-accent px-2 text-[13px] font-medium text-accent-foreground";
+  return (
+    <div className="-mx-1 mb-1 w-64 max-w-full overflow-hidden rounded-xl border border-border bg-background text-foreground">
+      <iframe
+        title="Mapa de la ubicación del cliente"
+        src={`https://www.openstreetmap.org/export/embed.html?bbox=${bbox}&layer=mapnik&marker=${ll}`}
+        loading="lazy"
+        referrerPolicy="no-referrer"
+        sandbox="allow-scripts allow-same-origin"
+        className="pointer-events-none block h-36 w-full border-0"
+      />
+      <div className="p-2">
+        <p className="text-sm font-medium">📍 {u.name || "Ubicación del cliente"}</p>
+        {u.address && <p className="text-xs text-muted">{u.address}</p>}
+        <div className="mt-2 flex gap-2">
+          <a href={`https://www.google.com/maps/search/?api=1&query=${ll}`} target="_blank" rel="noreferrer" className={boton}>
+            Google Maps
+          </a>
+          <a href={`https://waze.com/ul?ll=${ll}&navigate=yes`} target="_blank" rel="noreferrer" className={boton}>
+            Waze
+          </a>
+        </div>
+      </div>
     </div>
   );
 }

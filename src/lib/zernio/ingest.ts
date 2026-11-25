@@ -12,6 +12,7 @@ import { clasificarMensaje } from "@/lib/ia/clasificador";
 import { responderConIA } from "@/lib/ia/asesora";
 import { avisarMensajeNuevo } from "@/lib/push";
 import { transcribirAudiosDeMensaje } from "@/lib/ia/transcribir";
+import { completarMensaje, extrasDe, guardarExtras } from "./extras";
 
 type Platform = Database["public"]["Enums"]["channel_platform"];
 type AttachmentType = Database["public"]["Enums"]["attachment_type"];
@@ -315,7 +316,22 @@ async function handleMessage(e: MessageEvent): Promise<ProcessResult> {
     createdAt: m.sentAt,
   });
   if (!messageId) return { status: "duplicate" };
+  // Mensaje citado y ubicación: no vienen en el webhook, se piden a Zernio (antes de la IA,
+  // para que ella también sepa de qué producto habla el cliente o dónde está).
+  const completar =
+    platform === "tiktok"
+      ? Promise.resolve(false)
+      : completarMensaje({
+          messageId,
+          conversacionExterna: externalConvId,
+          cuenta: zernioAccountId,
+          idsExternos: [m.platformMessageId, m.id].filter(Boolean) as string[],
+        }).catch((err) => {
+          console.error("cita/ubicación", messageId, err);
+          return false;
+        });
   if (m.attachments?.length) await saveAttachments(conversationId, messageId, m.attachments);
+  await completar;
   // Notas de voz: se transcriben para que el equipo, el seguimiento y la IA las entiendan.
   let transcripcion: string | null = null;
   if (m.attachments?.some((a) => a.type === "audio")) {
@@ -463,6 +479,7 @@ export async function importInboxHistory(): Promise<{ conversaciones: number; me
             if (id) {
               mensajes++;
               if (m.attachments?.length) await saveAttachments(conversationId, id, m.attachments);
+              await guardarExtras(id, extrasDe(m));
             }
           }
           mCursor = mp.pagination?.hasMore ? mp.pagination.nextCursor ?? undefined : undefined;

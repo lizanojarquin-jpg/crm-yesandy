@@ -603,6 +603,7 @@ export type Database = {
           error_message: string | null
           external_message_id: string | null
           id: string
+          location: Json | null
           reply_to_external_id: string | null
           sender_profile_id: string | null
           sender_type: Database["public"]["Enums"]["sender_type"]
@@ -616,6 +617,7 @@ export type Database = {
           error_message?: string | null
           external_message_id?: string | null
           id?: string
+          location?: Json | null
           reply_to_external_id?: string | null
           sender_profile_id?: string | null
           sender_type: Database["public"]["Enums"]["sender_type"]
@@ -629,6 +631,7 @@ export type Database = {
           error_message?: string | null
           external_message_id?: string | null
           id?: string
+          location?: Json | null
           reply_to_external_id?: string | null
           sender_profile_id?: string | null
           sender_type?: Database["public"]["Enums"]["sender_type"]

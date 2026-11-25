@@ -125,66 +125,130 @@ export type Mensaje = {
   }[];
   /** Etapa que la IA detectó con este mensaje como evidencia. */
   evidencia: { to_stage: import("./etiquetas").Etapa; confirmada: boolean } | null;
+  /** Ubicación que mandó el cliente (WhatsApp). */
+  ubicacion: { latitude: number; longitude: number; name?: string; address?: string } | null;
+  /** Mensaje que el cliente (o el equipo) citó al responder. */
+  cita: Cita | null;
 };
 
-export async function listarMensajes(conversationId: string): Promise<Mensaje[]> {
+export type Cita = {
+  /** Id del mensaje citado si está en el CRM (para ir a él); null si es más viejo que el CRM. */
+  id: string | null;
+  /** null si no se encontró el mensaje citado. */
+  deCliente: boolean | null;
+  texto: string | null;
+  foto: string | null;
+  /** Tipo del primer adjunto del mensaje citado (image, audio…). */
+  tipo: string | null;
+};
+
+type AdjuntoFila = {
+  id: string;
+  type: string;
+  mime_type: string | null;
+  storage_path: string | null;
+  external_url: string | null;
+  detected_kind: string | null;
+  transcript: string | null;
+};
+const CAMPOS_ADJUNTO = "attachments(id, type, mime_type, storage_path, external_url, detected_kind, transcript)";
+
+export async function listarMensajes(conversationId: string, opciones: { citas?: boolean } = {}): Promise<Mensaje[]> {
   const sb = await createClient();
   const { data, error } = await sb
     .from("messages")
     .select(
       "id, direction, sender_type, sender_profile_id, body, delivery_status, error_message, created_at, " +
-        "attachments(id, type, mime_type, storage_path, external_url, detected_kind, transcript)",
+        `external_message_id, reply_to_external_id, location, ${CAMPOS_ADJUNTO}`,
     )
     .eq("conversation_id", conversationId)
     .order("created_at", { ascending: false })
     .limit(200)
     .returns<
-      (Omit<Mensaje, "adjuntos" | "evidencia"> & {
-        attachments: {
-          id: string;
-          type: string;
-          mime_type: string | null;
-          storage_path: string | null;
-          external_url: string | null;
-          detected_kind: string | null;
-          transcript: string | null;
-        }[];
+      (Omit<Mensaje, "adjuntos" | "evidencia" | "ubicacion" | "cita"> & {
+        external_message_id: string | null;
+        reply_to_external_id: string | null;
+        location: Mensaje["ubicacion"];
+        attachments: AdjuntoFila[];
       })[]
     >();
   if (error) throw error;
+  const filas = data ?? [];
 
-  const ids = (data ?? []).map((m) => m.id);
+  const ids = filas.map((m) => m.id);
   const { data: eventos } = ids.length
     ? await sb.from("stage_events").select("evidence_message_id, to_stage, confirmed_at").eq("source", "ai").in("evidence_message_id", ids)
     : { data: [] };
   const evid = new Map((eventos ?? []).map((e) => [e.evidence_message_id!, { to_stage: e.to_stage, confirmada: Boolean(e.confirmed_at) }]));
 
-  const rutas = (data ?? []).flatMap((m) => m.attachments.map((a) => a.storage_path)).filter(Boolean) as string[];
+  // Mensajes citados: casi siempre están entre los cargados; si son más viejos, se buscan aparte.
+  // (En hilos de comentarios no se muestran: ahí cada respuesta apunta al comentario y sería ruido.)
+  type Citado = { id: string; direction: "inbound" | "outbound"; body: string | null; attachments: AdjuntoFila[] };
+  const conCitas = opciones.citas !== false;
+  const citados = new Map<string, Citado>();
+  for (const m of filas) if (m.external_message_id) citados.set(m.external_message_id, m);
+  const faltan = conCitas
+    ? [...new Set(filas.map((m) => m.reply_to_external_id).filter((x): x is string => Boolean(x) && !citados.has(x!)))]
+    : [];
+  if (faltan.length) {
+    const { data: viejos } = await sb
+      .from("messages")
+      .select(`id, direction, body, external_message_id, ${CAMPOS_ADJUNTO}`)
+      .eq("conversation_id", conversationId)
+      .in("external_message_id", faltan)
+      .returns<(Citado & { external_message_id: string })[]>();
+    for (const m of viejos ?? []) citados.set(m.external_message_id, m);
+  }
+
+  const todosLosAdjuntos = [...filas.flatMap((m) => m.attachments), ...[...citados.values()].flatMap((m) => m.attachments)];
+  const rutas = [...new Set(todosLosAdjuntos.map((a) => a.storage_path).filter(Boolean) as string[])];
   const firmadas = new Map<string, string>();
   if (rutas.length) {
     const { data: urls } = await sb.storage.from("attachments").createSignedUrls(rutas, 60 * 60);
     for (const u of urls ?? []) if (u.path && u.signedUrl) firmadas.set(u.path, u.signedUrl);
   }
+  // Las fotos del catálogo que envía la IA se muestran desde la tienda (son públicas).
+  const urlDe = (a: AdjuntoFila) =>
+    a.storage_path
+      ? firmadas.get(a.storage_path) ?? null
+      : a.external_url?.startsWith("https://shop.yesandycr.com/")
+        ? a.external_url
+        : null;
 
-  return (data ?? [])
-    .reverse()
-    .map(({ attachments, ...m }) => ({
+  const citaDe = (externo: string | null): Cita | null => {
+    if (!conCitas || !externo) return null;
+    const q = citados.get(externo);
+    if (!q) return { id: null, deCliente: null, texto: null, foto: null, tipo: null };
+    const foto = q.attachments.find((a) => a.type === "image" || a.type === "sticker");
+    const voz = q.attachments.find((a) => a.transcript)?.transcript ?? null;
+    return {
+      id: q.id,
+      deCliente: q.direction === "inbound",
+      texto: q.body?.trim() || (voz ? `🎤 ${voz}` : null),
+      foto: foto ? urlDe(foto) : null,
+      tipo: q.attachments[0]?.type ?? null,
+    };
+  };
+
+  return filas.reverse().map((fila) => {
+    // external_message_id solo sirve para encontrar las citas: no se manda a la pantalla.
+    const { attachments, reply_to_external_id, location, external_message_id, ...m } = fila;
+    void external_message_id;
+    return {
       ...m,
       evidencia: evid.get(m.id) ?? null,
+      ubicacion: location ?? null,
+      cita: citaDe(reply_to_external_id),
       adjuntos: attachments.map((a) => ({
         id: a.id,
         type: a.type,
         mime_type: a.mime_type,
         detected_kind: a.detected_kind,
         transcript: a.transcript,
-        // Las fotos del catálogo que envía la IA se muestran desde la tienda (son públicas).
-        url: a.storage_path
-          ? firmadas.get(a.storage_path) ?? null
-          : a.external_url?.startsWith("https://shop.yesandycr.com/")
-            ? a.external_url
-            : null,
+        url: urlDe(a),
       })),
-    }));
+    };
+  });
 }
 
 /** Otras conversaciones del mismo contacto y el historial de etapas, para la ficha. */
