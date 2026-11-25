@@ -3,10 +3,13 @@
 import { useEffect } from "react";
 import { marcarLeida } from "../acciones";
 
-/** Al tener la conversación abierta, los mensajes nuevos quedan como leídos. */
+/**
+ * Al abrir la conversación (y cuando llegan mensajes nuevos con ella abierta) queda leída en el CRM
+ * y en la red social, aunque en el CRM ya no estuviera marcada como nueva (p. ej. si la atendió la IA).
+ */
 export function MarcarLeida({ id, sinLeer }: { id: string; sinLeer: number }) {
   useEffect(() => {
-    if (sinLeer > 0 && document.visibilityState === "visible") marcarLeida(id);
+    if (document.visibilityState === "visible") marcarLeida(id);
   }, [id, sinLeer]);
   return null;
 }

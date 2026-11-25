@@ -148,6 +148,8 @@ export async function sendInboxMessage(
     message?: string;
     attachmentUrl?: string;
     attachmentType?: "image" | "video" | "audio" | "file";
+    /** WhatsApp: el audio (OGG/Opus mono) llega como nota de voz. */
+    voiceNote?: boolean;
     humanAgentTag?: boolean;
     idempotencyKey?: string;
   },
@@ -157,6 +159,7 @@ export async function sendInboxMessage(
   if (p.attachmentUrl) {
     body.attachmentUrl = p.attachmentUrl;
     body.attachmentType = p.attachmentType ?? "image";
+    if (p.voiceNote) body.voiceNote = true;
   }
   if (p.humanAgentTag) {
     // Facebook/Instagram fuera de las 24 h: respuesta de una persona (hasta 7 días).
@@ -249,12 +252,32 @@ export async function privateReplyToComment(
   return { messageId: r.messageId ?? null };
 }
 
-/** Marca la conversación como leída en la plataforma (en WhatsApp envía los checks azules). */
+/**
+ * Marca la conversación como leída en la plataforma: en Messenger e Instagram envía el "visto".
+ * En WhatsApp en coexistencia (el caso de Yesandy) Zernio no envía los checks azules: ahí sirve
+ * `sendTyping`, que muestra "escribiendo…" y de paso marca el mensaje como leído.
+ */
 export async function markConversationRead(conversationId: string, accountId: string) {
   await zernio(`/inbox/conversations/${encodeURIComponent(conversationId)}/read`, {
     method: "POST",
     body: JSON.stringify({ accountId }),
   });
+}
+
+/** "Escribiendo…" (WhatsApp hasta 25 s, Messenger 20 s, Instagram). En WhatsApp también marca como leído. */
+export async function sendTyping(conversationId: string, accountId: string) {
+  await zernio(`/inbox/conversations/${encodeURIComponent(conversationId)}/typing`, {
+    method: "POST",
+    body: JSON.stringify({ accountId }),
+  });
+}
+
+/** Antes de responder: visto y "escribiendo…". Nunca hace fallar el envío. */
+export async function vistoYEscribiendo(conversationId: string, accountId: string) {
+  await Promise.all([
+    markConversationRead(conversationId, accountId).catch((e) => console.error("leído", e)),
+    sendTyping(conversationId, accountId).catch((e) => console.error("escribiendo", e)),
+  ]);
 }
 
 /** Descarga un adjunto. Las URLs de WhatsApp de Zernio piden la API key. */

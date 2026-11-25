@@ -145,6 +145,7 @@ export default async function ConversacionPage({
               esComentario={esComentario}
               permitePrivado={esComentario && (conv.canal.platform === "facebook" || conv.canal.platform === "instagram")}
               permiteAudio={!esComentario && ["whatsapp", "facebook", "instagram"].includes(conv.canal.platform)}
+              audioOgg={conv.canal.platform === "whatsapp"}
               puede={ventana.puede}
               aviso={ventana.aviso}
               plantillas={plantillas}

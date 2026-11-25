@@ -2,9 +2,12 @@
 
 import { startTransition, useActionState, useEffect, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
-import { enviar, prepararSubida, type Estado } from "../acciones";
+import { convertirAOgg, puedeConvertirAOgg } from "@/lib/audio/ogg-opus";
+import { enviar, escribiendo, prepararSubida, type Estado } from "../acciones";
 import { PlantillaPicker, type PlantillaOpcion } from "./plantilla-picker";
 import { Grabadora } from "./grabadora";
+
+const SIN_NOTA_DE_VOZ = "Este navegador no puede preparar notas de voz para WhatsApp. Actualiza Chrome o Safari.";
 
 /** Igual que en el servidor. */
 const MAX_FOTOS = 10;
@@ -15,6 +18,8 @@ type Props = {
   permitePrivado: boolean;
   /** Notas de voz: WhatsApp, Messenger e Instagram por mensaje directo. */
   permiteAudio: boolean;
+  /** WhatsApp: el audio se convierte a nota de voz OGG/Opus antes de subirlo. */
+  audioOgg: boolean;
   puede: boolean;
   aviso: string | null;
   /** Solo WhatsApp fuera de las 24 h. */
@@ -58,6 +63,7 @@ export function Composer({
   esComentario,
   permitePrivado,
   permiteAudio,
+  audioOgg,
   puede,
   aviso,
   plantillas,
@@ -74,9 +80,13 @@ export function Composer({
   const [privado, setPrivado] = useState(false);
   const [idem, setIdem] = useState(() => crypto.randomUUID());
   const archivo = useRef<HTMLInputElement>(null);
+  const camara = useRef<HTMLInputElement>(null);
   const area = useRef<HTMLTextAreaElement>(null);
+  const ultimoEscribiendo = useRef(0);
   // Archivo ya subido → su ruta, para que un reintento no lo vuelva a subir.
   const subidos = useRef(new WeakMap<File, string>());
+  // Grabación → su versión de nota de voz para WhatsApp.
+  const convertidos = useRef(new WeakMap<File, File>());
 
   const quitarFotos = () => {
     fotos.forEach((f) => URL.revokeObjectURL(f.vista));
@@ -171,8 +181,32 @@ export function Composer({
     startTransition(() => accion(fd));
   }
 
-  async function mandarAudio(audio: File) {
+  /** El cliente ve "escribiendo…" (como máximo un aviso cada 15 s). En WhatsApp además queda leído. */
+  function avisarEscribiendo() {
+    if (esComentario || Date.now() - ultimoEscribiendo.current < 15_000) return;
+    ultimoEscribiendo.current = Date.now();
+    escribiendo(conversationId).catch(() => null);
+  }
+
+  async function mandarAudio(grabado: File) {
     if (ocupado) return;
+    let audio = grabado;
+    if (audioOgg) {
+      // Se convierte una sola vez: si falla el envío, el reintento usa el mismo archivo ya subido.
+      const listo = convertidos.current.get(grabado);
+      if (listo) audio = listo;
+      else {
+        setSubiendo(true);
+        try {
+          audio = await convertirAOgg(grabado);
+          convertidos.current.set(grabado, audio);
+        } catch {
+          setSubiendo(false);
+          setProblema(SIN_NOTA_DE_VOZ);
+          return;
+        }
+      }
+    }
     const rutas = await subir([audio], "audio");
     if (!rutas) return;
     const fd = new FormData();
@@ -234,6 +268,7 @@ export function Composer({
       {grabando ? (
         <Grabadora
           enviando={ocupado}
+          onGrabando={avisarEscribiendo}
           onEnviar={mandarAudio}
           onCerrar={() => {
             setGrabando(false);
@@ -316,6 +351,30 @@ export function Composer({
                   className="hidden"
                   onChange={(e) => agregarFotos(e.target.files)}
                 />
+                {/* Abre la cámara del celular directamente; la foto queda en la lista para enviar. */}
+                <input
+                  ref={camara}
+                  type="file"
+                  accept="image/*"
+                  capture="environment"
+                  className="hidden"
+                  onChange={(e) => {
+                    agregarFotos(e.target.files);
+                    e.target.value = "";
+                  }}
+                />
+                <button
+                  type="button"
+                  onClick={() => camara.current?.click()}
+                  disabled={ocupado || fotos.length >= MAX_FOTOS}
+                  aria-label="Tomar foto con la cámara"
+                  className="hidden size-11 shrink-0 items-center justify-center rounded-full text-muted hover:bg-background hover:text-foreground [@media(pointer:coarse)]:flex"
+                >
+                  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                    <path d="M14.5 4h-5L7.5 6.5H4a1 1 0 0 0-1 1V19a1 1 0 0 0 1 1h16a1 1 0 0 0 1-1V7.5a1 1 0 0 0-1-1h-3.5L14.5 4Z" />
+                    <circle cx="12" cy="13" r="3.5" />
+                  </svg>
+                </button>
                 <button
                   type="button"
                   onClick={() => archivo.current?.click()}
@@ -347,7 +406,10 @@ export function Composer({
             <textarea
               ref={area}
               value={texto}
-              onChange={(e) => setTexto(e.target.value)}
+              onChange={(e) => {
+                setTexto(e.target.value);
+                if (e.target.value.trim()) avisarEscribiendo();
+              }}
               onKeyDown={(e) => {
                 // En computadora Enter envía y Shift+Enter hace salto de línea. En el celular Enter es salto de línea.
                 if (e.key === "Enter" && !e.shiftKey && window.matchMedia("(pointer: fine)").matches) {
@@ -373,8 +435,10 @@ export function Composer({
               // Sin texto ni fotos, el botón de enviar se vuelve micrófono (como en WhatsApp).
               <button
                 type="button"
-                onClick={() => {
+                onClick={async () => {
                   setProblema(null);
+                  // En WhatsApp hay que poder convertir a nota de voz; se avisa antes de grabar en vano.
+                  if (audioOgg && !(await puedeConvertirAOgg())) return setProblema(SIN_NOTA_DE_VOZ);
                   setGrabando(true);
                 }}
                 aria-label="Grabar audio"

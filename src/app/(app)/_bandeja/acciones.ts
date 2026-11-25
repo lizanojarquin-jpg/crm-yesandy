@@ -11,6 +11,7 @@ import {
   replyToComment,
   sendInboxMessage,
   sendTemplate,
+  vistoYEscribiendo,
   ZernioError,
 } from "@/lib/zernio/client";
 import { contarVariables, cuerpo, plantillasDe, rellenar } from "@/lib/inbox/plantillas";
@@ -32,8 +33,14 @@ const FORMATOS: Record<string, { tipo: "image" | "audio"; mime: string }> = {
   jpg: { tipo: "image", mime: "image/jpeg" },
   png: { tipo: "image", mime: "image/png" },
   m4a: { tipo: "audio", mime: "audio/mp4" },
+  ogg: { tipo: "audio", mime: "audio/ogg" },
 };
-const EXTENSION: Record<string, string> = { "image/jpeg": "jpg", "image/png": "png", "audio/mp4": "m4a" };
+const EXTENSION: Record<string, string> = { "image/jpeg": "jpg", "image/png": "png", "audio/mp4": "m4a", "audio/ogg": "ogg" };
+/**
+ * Formato de audio que acepta cada canal: WhatsApp solo nota de voz OGG/Opus (rechaza el M4A del
+ * navegador); Instagram rechaza OGG y acepta M4A; Messenger acepta M4A.
+ */
+const AUDIO_DEL_CANAL: Record<string, string> = { whatsapp: "ogg", facebook: "m4a", instagram: "m4a" };
 
 /** Conversación con los datos que hacen falta para enviar. La lectura pasa por RLS. */
 async function cargar(conversationId: string) {
@@ -130,10 +137,13 @@ export async function prepararSubida(
   const subidas: { ruta: string; token: string }[] = [];
   for (const a of archivos) {
     const ext = EXTENSION[a.mime.split(";")[0]];
-    if (!ext || FORMATOS[ext].tipo !== a.tipo) {
+    if (!ext || FORMATOS[ext].tipo !== a.tipo || (a.tipo === "audio" && AUDIO_DEL_CANAL[conv.canal.platform] !== ext)) {
       return {
         ok: false,
-        mensaje: a.tipo === "audio" ? "Ese formato de audio no se puede enviar." : "Solo se pueden enviar fotos JPG o PNG.",
+        mensaje:
+          a.tipo === "audio"
+            ? "Este navegador no puede preparar audios para este canal. Actualiza Chrome o Safari e intenta de nuevo."
+            : "Solo se pueden enviar fotos JPG o PNG.",
       };
     }
     if (a.tamano <= 0 || a.tamano > (a.tipo === "audio" ? MAX_AUDIO : MAX_IMAGEN)) {
@@ -149,7 +159,7 @@ export async function prepararSubida(
 
 /** Rutas subidas con `prepararSubida`: solo se aceptan las de esta conversación. */
 function leerAdjuntos(conversationId: string, fd: FormData) {
-  const patron = new RegExp(`^${conversationId}/enviados/[0-9a-f-]{36}\\.(jpg|png|m4a)$`);
+  const patron = new RegExp(`^${conversationId}/enviados/[0-9a-f-]{36}\\.(jpg|png|m4a|ogg)$`);
   const rutas = fd.getAll("adjunto").map(String);
   if (rutas.some((r) => !patron.test(r))) return null;
   return rutas.map((ruta) => ({ ruta, ...FORMATOS[ruta.split(".").pop()!] }));
@@ -229,6 +239,11 @@ export async function enviar(conversationId: string, _prev: Estado, fd: FormData
       if (audio && !CANALES_AUDIO.includes(platform)) {
         return { ok: false, mensaje: "Los audios solo se pueden enviar por WhatsApp, Messenger e Instagram." };
       }
+      if (audio && !audio.ruta.endsWith(`.${AUDIO_DEL_CANAL[platform]}`)) {
+        return { ok: false, mensaje: "Este navegador no puede preparar audios para este canal. Actualiza Chrome o Safari." };
+      }
+      // Como abrir el chat en la app: lo que escribió el cliente queda como visto antes de responder.
+      await markConversationRead(conv.external_conversation_id, accountId).catch((e) => console.error("leído", e));
 
       // Enlaces temporales para que la plataforma descargue cada archivo (falla si no se subió).
       const urls = new Map<string, string>();
@@ -254,6 +269,7 @@ export async function enviar(conversationId: string, _prev: Estado, fd: FormData
           message: conTexto ? texto : undefined,
           attachmentUrl: urls.get(a.ruta),
           attachmentType: a.tipo,
+          voiceNote: a.tipo === "audio" && platform === "whatsapp",
           idempotencyKey: llave(`${a.tipo === "audio" ? "a" : "f"}${i}`),
         });
         const id = await guardarSaliente(admin, conv.id, usuario.id, conTexto ? texto : null, r.messageId, undefined, a.tipo !== "audio");
@@ -403,18 +419,28 @@ async function guardarAdjunto(admin: Admin, messageId: string, ruta: string, mim
 export async function marcarLeida(conversationId: string) {
   await getUsuarioActual();
   const sb = await createClient();
-  const { data } = await sb
+  const { data: c } = await sb
     .from("conversations")
-    .update({ unread_count: 0 })
+    .select("kind, unread_count, external_conversation_id, canal:channel_accounts(zernio_account_id)")
     .eq("id", conversationId)
-    .gt("unread_count", 0)
-    .select("kind, external_conversation_id, canal:channel_accounts(zernio_account_id)")
-    .returns<{ kind: string; external_conversation_id: string; canal: { zernio_account_id: string } }[]>();
-  const c = data?.[0];
-  if (c?.kind === "dm") {
-    // Igual que abrir el chat en la app: el cliente ve su mensaje como leído.
-    after(() => markConversationRead(c.external_conversation_id, c.canal.zernio_account_id).catch(() => null));
+    .maybeSingle()
+    .returns<{ kind: string; unread_count: number; external_conversation_id: string; canal: { zernio_account_id: string } } | null>();
+  if (!c) return;
+  if (c.unread_count > 0) await sb.from("conversations").update({ unread_count: 0 }).eq("id", conversationId);
+  if (c.kind === "dm") {
+    // Igual que abrir el chat en la app: en Messenger e Instagram el cliente ve su mensaje como visto
+    // y en Meta deja de aparecer sin leer. Se hace siempre al abrir (aunque la IA ya lo haya atendido).
+    after(() => markConversationRead(c.external_conversation_id, c.canal.zernio_account_id).catch((e) => console.error("leído", e)));
   }
+}
+
+/** Mientras alguien escribe o graba: "escribiendo…" para el cliente (en WhatsApp además marca leído). */
+export async function escribiendo(conversationId: string) {
+  const usuario = await getUsuarioActual();
+  const conv = await cargar(conversationId);
+  if (!conv || conv.kind !== "dm" || sinPermisoParaResponder(usuario, conv)) return;
+  if (!ventanaMensajes(conv.canal.platform, conv.last_inbound_at).puede) return;
+  await vistoYEscribiendo(conv.external_conversation_id, conv.canal.zernio_account_id);
 }
 
 /** Solo administración asigna a otra persona. (Además lo impide la regla de la base de datos.) */

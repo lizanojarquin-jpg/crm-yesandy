@@ -19,10 +19,13 @@ type Fase = "pidiendo" | "grabando" | "lista" | "sinSoporte" | "sinPermiso";
 /** Graba una nota de voz, la deja escuchar y la envía. Se monta al tocar el micrófono. */
 export function Grabadora({
   enviando,
+  onGrabando,
   onEnviar,
   onCerrar,
 }: {
   enviando: boolean;
+  /** Se llama mientras graba (para el "escribiendo…" del cliente). */
+  onGrabando?: () => void;
   onEnviar: (archivo: File) => void;
   onCerrar: () => void;
 }) {
@@ -33,6 +36,10 @@ export function Grabadora({
   const grabador = useRef<MediaRecorder | null>(null);
   const flujo = useRef<MediaStream | null>(null);
   const descartar = useRef(false);
+  const avisar = useRef(onGrabando);
+  useEffect(() => {
+    avisar.current = onGrabando;
+  }, [onGrabando]);
 
   const soltarMicrofono = () => {
     flujo.current?.getTracks().forEach((t) => t.stop());
@@ -75,7 +82,9 @@ export function Grabadora({
   // Contador y corte automático a los 3 minutos.
   useEffect(() => {
     if (fase !== "grabando") return;
+    avisar.current?.();
     const t = setInterval(() => {
+      avisar.current?.();
       setSegundos((s) => {
         if (s + 1 >= MAX_SEGUNDOS && grabador.current?.state === "recording") grabador.current.stop();
         return s + 1;

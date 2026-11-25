@@ -3,9 +3,12 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { cargarConvIA, enviarRespuesta, estadoTienda, historialParaIA, leerAjustesIA, pensar, traspasar } from "./asesora";
 
 // Retomar clientes que esperan (decisión de Allan, rige desde el 24-nov):
-// si el equipo ya atendía a un cliente y el cliente lleva más de 6 horas hábiles esperando
-// respuesta, la IA le escribe para retomar la conversación y la devuelve a la bandeja
-// para que la tome la misma vendedora u otra.
+// si el equipo ya atendía a un cliente y el cliente lleva más de N horas esperando respuesta
+// (retomar_horas: 18 desde el 25-nov, antes 6 horas hábiles), la IA le escribe para retomar la
+// conversación y la devuelve a la bandeja para que la tome la misma vendedora u otra.
+// Se cuentan horas de reloj: Meta solo deja escribir texto libre hasta 24 h después del último
+// mensaje del cliente, así que 18 horas hábiles casi nunca cabrían. La IA escribe solo con la
+// tienda abierta (desde las 8:30).
 
 const MINUTOS_ENTRE_REVISIONES = 10;
 const MAX_POR_REVISION = 5; // para no pasarse del tiempo de la función
@@ -14,7 +17,7 @@ const VENTANA_META_MS = 23 * 3600_000; // fuera de 24 h Meta no deja escribir te
 const AUTOMATICO_MS = 20_000;
 
 const instruccion = (horas: number) =>
-  `El cliente escribió hace unas ${horas} horas de atención y nadie del equipo le respondió. ` +
+  `El cliente escribió hace unas ${horas} horas y nadie del equipo le respondió. ` +
   "Escribe UN solo mensaje corto y cálido para retomar: pide disculpas por la demora, retoma lo último que pidió o preguntó, " +
   "y dile que una asesora del equipo le confirma enseguida (o pregúntale si todavía le interesa). " +
   "No te vuelvas a presentar si ya hay mensajes del equipo o tuyos en la conversación. " +
@@ -84,7 +87,7 @@ export async function retomarConversaciones(
   const { data: cfg } = await db.from("app_settings").select("key, value").in("key", ["retomar_desde", "retomar_horas"]);
   const valor = new Map((cfg ?? []).map((r) => [r.key, r.value]));
   const desde = new Date(opciones.desde ?? String(valor.get("retomar_desde") ?? "2026-11-24T00:00:00-06:00"));
-  const horas = Number(valor.get("retomar_horas") ?? 6);
+  const horas = Number(valor.get("retomar_horas") ?? 18);
   const limiteVentana = new Date(Date.now() - VENTANA_META_MS);
   const inicio = new Date(Math.max(desde.getTime(), limiteVentana.getTime()));
 
@@ -106,7 +109,6 @@ export async function retomarConversaciones(
     // El último mensaje es del cliente (nadie le respondió después).
     if (new Date(c.last_message_at).getTime() - new Date(c.last_inbound_at).getTime() > 1000) continue;
     if (ajustes.modo === "pruebas" && !opciones.soloProbar && !ajustes.contactosPrueba.includes(c.contact_id)) continue;
-    if (minutosHabiles(new Date(c.last_inbound_at), new Date()) < horas * 60) continue;
 
     const { hist, turnos } = await historialParaIA(c.id);
     const ultimoCliente = [...hist].reverse().find((m) => m.direction === "inbound");
@@ -122,7 +124,7 @@ export async function retomarConversaciones(
 
     const conv = await cargarConvIA(c.id);
     if (!conv) continue;
-    const espera = Math.round(minutosHabiles(new Date(c.last_inbound_at), new Date()) / 60);
+    const espera = Math.round((Date.now() - new Date(c.last_inbound_at).getTime()) / 3600_000);
 
     if (opciones.soloProbar) {
       let texto = "";
@@ -130,7 +132,7 @@ export async function retomarConversaciones(
         const d = await pensar({ turnos, canal: conv.canal.platform, nombre: conv.contacto.name, etapa: conv.contacto.stage, extra: instruccion(espera) });
         texto = ` → "${d.texto}"`;
       }
-      log.push(`retomaría ${c.id} (espera ${espera} h hábiles)${texto}`);
+      log.push(`retomaría ${c.id} (espera ${espera} h)${texto}`);
       hechas++;
       continue;
     }
