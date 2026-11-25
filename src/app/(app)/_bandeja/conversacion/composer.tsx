@@ -3,11 +3,26 @@
 import { startTransition, useActionState, useEffect, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { convertirAOgg, puedeConvertirAOgg } from "@/lib/audio/ogg-opus";
+import { convertirAMp3 } from "@/lib/audio/mp3";
+import { comprimirFoto, esFoto } from "@/lib/fotos";
+import { reportarFalla } from "@/lib/diagnostico-cliente";
 import { enviar, escribiendo, prepararSubida, type Estado } from "../acciones";
 import { PlantillaPicker, type PlantillaOpcion } from "./plantilla-picker";
 import { Grabadora } from "./grabadora";
 
-const SIN_NOTA_DE_VOZ = "Este navegador no puede preparar notas de voz para WhatsApp. Actualiza Chrome o Safari.";
+const SIN_NOTA_DE_VOZ = "No se pudo preparar el audio para WhatsApp. Actualiza el sistema del celular y el navegador e intenta de nuevo.";
+
+/** Nota de voz OGG/Opus; si el navegador no puede (o falla), MP3. */
+async function prepararAudioWhatsApp(grabado: File): Promise<File> {
+  if (await puedeConvertirAOgg()) {
+    try {
+      return await convertirAOgg(grabado);
+    } catch (e) {
+      reportarFalla("nota de voz OGG (se usa MP3)", e);
+    }
+  }
+  return convertirAMp3(grabado);
+}
 
 /** Igual que en el servidor. */
 const MAX_FOTOS = 10;
@@ -41,23 +56,6 @@ function rellenar(texto: string, cliente: string, vendedora: string) {
     .replace(/^\s+/, "");
 }
 
-/** Reduce fotos del celular (varios MB) a JPEG de 1600 px antes de enviarlas. */
-async function comprimir(f: File): Promise<File> {
-  if (!f.type.startsWith("image/") || f.type === "image/gif" || (f.type === "image/jpeg" && f.size < 400_000)) return f;
-  try {
-    const bmp = await createImageBitmap(f);
-    const escala = Math.min(1, 1600 / Math.max(bmp.width, bmp.height));
-    const canvas = document.createElement("canvas");
-    canvas.width = Math.round(bmp.width * escala);
-    canvas.height = Math.round(bmp.height * escala);
-    canvas.getContext("2d")!.drawImage(bmp, 0, 0, canvas.width, canvas.height);
-    const blob = await new Promise<Blob | null>((r) => canvas.toBlob(r, "image/jpeg", 0.82));
-    return blob ? new File([blob], "foto.jpg", { type: "image/jpeg" }) : f;
-  } catch {
-    return f;
-  }
-}
-
 export function Composer({
   conversationId,
   esComentario,
@@ -76,6 +74,7 @@ export function Composer({
   const [fotos, setFotos] = useState<Foto[]>([]);
   const [grabando, setGrabando] = useState(false);
   const [subiendo, setSubiendo] = useState(false);
+  const [preparando, setPreparando] = useState(false);
   const [problema, setProblema] = useState<string | null>(null);
   const [privado, setPrivado] = useState(false);
   const [idem, setIdem] = useState(() => crypto.randomUUID());
@@ -110,7 +109,7 @@ export function Composer({
     return r;
   }, null);
 
-  const ocupado = pendiente || subiendo;
+  const ocupado = pendiente || subiendo || preparando;
   const error = problema ?? (estado && !estado.ok ? estado.mensaje : null);
 
   // La caja crece con el texto hasta 6 líneas.
@@ -140,7 +139,19 @@ export function Composer({
     try {
       const faltan = archivos.filter((f) => !subidos.current.has(f));
       if (faltan.length) {
-        const listos = tipo === "image" ? await Promise.all(faltan.map(comprimir)) : faltan;
+        // Una por una: en iPhone procesar varias a la vez agota la memoria y recarga la página.
+        const listos: File[] = [];
+        if (tipo === "image") {
+          for (const [i, f] of faltan.entries()) {
+            try {
+              listos.push(await comprimirFoto(f));
+            } catch (e) {
+              reportarFalla("preparar foto", e, `${f.type || "sin tipo"} ${f.name} ${f.size} bytes`);
+              setProblema(`No se pudo preparar la foto ${i + 1}. Quítala y elígela de nuevo, o tómala con la cámara.`);
+              return null;
+            }
+          }
+        } else listos.push(...faltan);
         const r = await prepararSubida(
           conversationId,
           listos.map((f) => ({ tipo, mime: f.type, tamano: f.size })),
@@ -161,7 +172,8 @@ export function Composer({
         );
       }
       return archivos.map((f) => subidos.current.get(f)!);
-    } catch {
+    } catch (e) {
+      reportarFalla(`subir ${tipo === "image" ? "fotos" : "audio"}`, e);
       setProblema("No se pudo subir. Revisa la conexión e intenta de nuevo.");
       return null;
     } finally {
@@ -192,17 +204,19 @@ export function Composer({
     if (ocupado) return;
     let audio = grabado;
     if (audioOgg) {
+      // WhatsApp: nota de voz OGG/Opus; si el celular no puede crearla (iPhone con iOS viejo), MP3.
       // Se convierte una sola vez: si falla el envío, el reintento usa el mismo archivo ya subido.
       const listo = convertidos.current.get(grabado);
       if (listo) audio = listo;
       else {
         setSubiendo(true);
         try {
-          audio = await convertirAOgg(grabado);
+          audio = await prepararAudioWhatsApp(grabado);
           convertidos.current.set(grabado, audio);
-        } catch {
+        } catch (e) {
           setSubiendo(false);
           setProblema(SIN_NOTA_DE_VOZ);
+          reportarFalla("convertir audio", e);
           return;
         }
       }
@@ -217,13 +231,44 @@ export function Composer({
     startTransition(() => accion(fd));
   }
 
-  function agregarFotos(lista: FileList | null) {
-    const nuevas = Array.from(lista ?? []).filter((f) => f.type.startsWith("image/"));
+  /**
+   * Cada foto se reduce apenas se elige (una por una) y la miniatura usa la versión reducida:
+   * mostrar varias fotos de 12 MP del iPhone a tamaño completo agota la memoria de Safari.
+   */
+  async function agregarFotos(lista: FileList | null) {
+    const nuevas = Array.from(lista ?? []);
     if (archivo.current) archivo.current.value = "";
+    if (camara.current) camara.current.value = "";
     if (!nuevas.length) return;
     const espacio = MAX_FOTOS - fotos.length;
     setProblema(nuevas.length > espacio ? `Se pueden enviar hasta ${MAX_FOTOS} fotos a la vez.` : null);
-    setFotos((a) => [...a, ...nuevas.slice(0, Math.max(0, espacio)).map((f) => ({ archivo: f, vista: URL.createObjectURL(f) }))]);
+    setPreparando(true);
+    let fallidas = 0;
+    try {
+      for (const f of nuevas.slice(0, Math.max(0, espacio))) {
+        if (!esFoto(f)) {
+          fallidas++;
+          reportarFalla("foto no reconocida", null, `${f.type || "sin tipo"} ${f.name} ${f.size} bytes`);
+          continue;
+        }
+        try {
+          const lista = await comprimirFoto(f);
+          setFotos((a) => [...a, { archivo: lista, vista: URL.createObjectURL(lista) }]);
+        } catch (e) {
+          fallidas++;
+          reportarFalla("preparar foto", e, `${f.type || "sin tipo"} ${f.name} ${f.size} bytes`);
+        }
+      }
+    } finally {
+      setPreparando(false);
+    }
+    if (fallidas) {
+      setProblema(
+        fallidas === 1
+          ? "Una foto no se pudo preparar. Prueba elegirla de nuevo o tómala con la cámara."
+          : `${fallidas} fotos no se pudieron preparar. Prueba elegirlas de nuevo o tómalas con la cámara.`,
+      );
+    }
   }
 
   function quitarFoto(i: number) {
@@ -301,6 +346,7 @@ export function Composer({
             </ul>
           )}
 
+          {preparando && !fotos.length && <p className="mb-2 text-xs text-muted">Preparando fotos…</p>}
           {fotos.length > 0 && (
             <div className="mb-2">
               <ul className="flex gap-2 overflow-x-auto pb-1" aria-label="Fotos por enviar">
@@ -335,7 +381,7 @@ export function Composer({
               </ul>
               <p className="mt-0.5 text-xs text-muted">
                 {fotos.length} {fotos.length === 1 ? "foto" : "fotos"} · cada una llega como un mensaje
-                {subiendo ? " · subiendo…" : ""}
+                {preparando ? " · preparando…" : subiendo ? " · subiendo…" : ""}
               </p>
             </div>
           )}
@@ -358,10 +404,7 @@ export function Composer({
                   accept="image/*"
                   capture="environment"
                   className="hidden"
-                  onChange={(e) => {
-                    agregarFotos(e.target.files);
-                    e.target.value = "";
-                  }}
+                  onChange={(e) => agregarFotos(e.target.files)}
                 />
                 <button
                   type="button"
@@ -435,10 +478,8 @@ export function Composer({
               // Sin texto ni fotos, el botón de enviar se vuelve micrófono (como en WhatsApp).
               <button
                 type="button"
-                onClick={async () => {
+                onClick={() => {
                   setProblema(null);
-                  // En WhatsApp hay que poder convertir a nota de voz; se avisa antes de grabar en vano.
-                  if (audioOgg && !(await puedeConvertirAOgg())) return setProblema(SIN_NOTA_DE_VOZ);
                   setGrabando(true);
                 }}
                 aria-label="Grabar audio"

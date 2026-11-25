@@ -1,6 +1,7 @@
 // Convierte una grabación del navegador (M4A) en nota de voz de WhatsApp: OGG con Opus, mono, 48 kHz.
 // Todo ocurre en el navegador con WebCodecs (Chrome, Edge y Safari actuales); no hay que instalar nada.
 // WhatsApp rechaza el M4A que graba el navegador ("Media upload error 131053").
+import { decodificarMono } from "./decodificar";
 
 const TASA = 48_000;
 const PRE_SKIP_POR_DEFECTO = 312; // retraso típico del codificador Opus a 48 kHz
@@ -92,18 +93,7 @@ function etiquetasOpus(): Uint8Array {
 /** Convierte cualquier audio que el navegador pueda reproducir en un archivo .ogg (Opus, mono). */
 export async function convertirAOgg(archivo: Blob): Promise<File> {
   // 1. Decodificar a muestras de 48 kHz y mezclar a mono.
-  const ctx = new AudioContext({ sampleRate: TASA });
-  let mono: Float32Array;
-  try {
-    const buf = await ctx.decodeAudioData(await archivo.arrayBuffer());
-    mono = new Float32Array(buf.length);
-    for (let c = 0; c < buf.numberOfChannels; c++) {
-      const canal = buf.getChannelData(c);
-      for (let i = 0; i < canal.length; i++) mono[i] += canal[i] / buf.numberOfChannels;
-    }
-  } finally {
-    ctx.close().catch(() => null);
-  }
+  const mono = await decodificarMono(archivo, TASA);
 
   // 2. Codificar en Opus (paquetes de 20 ms).
   const paquetes: { datos: Uint8Array; duracion: number }[] = [];

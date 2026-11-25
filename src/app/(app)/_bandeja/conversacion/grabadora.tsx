@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { reportarFalla } from "@/lib/diagnostico-cliente";
 
 /** Máximo de una grabación. */
 const MAX_SEGUNDOS = 180;
@@ -29,7 +30,11 @@ export function Grabadora({
   onEnviar: (archivo: File) => void;
   onCerrar: () => void;
 }) {
-  const [formato] = useState(formatoAudio);
+  const [formato] = useState(() => {
+    const f = formatoAudio();
+    if (!f) reportarFalla("grabar audio", null, "el navegador no graba M4A");
+    return f;
+  });
   const [fase, setFase] = useState<Fase>(formato ? "pidiendo" : "sinSoporte");
   const [segundos, setSegundos] = useState(0);
   const [audio, setAudio] = useState<{ archivo: File; url: string } | null>(null);
@@ -70,7 +75,10 @@ export function Grabadora({
         grabador.current = r;
         setFase("grabando");
       })
-      .catch(() => vivo && setFase("sinPermiso"));
+      .catch((e) => {
+        reportarFalla("abrir micrófono", e);
+        if (vivo) setFase("sinPermiso");
+      });
     return () => {
       vivo = false;
       descartar.current = true;
@@ -124,7 +132,7 @@ export function Grabadora({
         <p role="alert" className="flex-1 text-sm text-danger">
           {fase === "sinSoporte"
             ? "Este navegador no puede grabar audios. Usa Chrome o Safari actualizados."
-            : "No hay permiso para usar el micrófono. Actívalo en los ajustes del navegador para este sitio."}
+            : "No hay permiso para el micrófono. En iPhone: Ajustes → Apps → Safari → Micrófono → Permitir. En Android: toca el candado junto a la dirección → Permisos → Micrófono."}
         </p>
         <button type="button" onClick={onCerrar} className="h-9 rounded-lg border border-border px-3 text-sm">
           Cerrar

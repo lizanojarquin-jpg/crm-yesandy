@@ -558,6 +558,41 @@ export type Database = {
           },
         ]
       }
+      device_reports: {
+        Row: {
+          context: string
+          created_at: string
+          detail: string | null
+          device: Json
+          id: string
+          profile_id: string
+        }
+        Insert: {
+          context: string
+          created_at?: string
+          detail?: string | null
+          device?: Json
+          id?: string
+          profile_id?: string
+        }
+        Update: {
+          context?: string
+          created_at?: string
+          detail?: string | null
+          device?: Json
+          id?: string
+          profile_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "device_reports_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       messages: {
         Row: {
           body: string | null

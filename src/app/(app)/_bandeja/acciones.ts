@@ -34,13 +34,21 @@ const FORMATOS: Record<string, { tipo: "image" | "audio"; mime: string }> = {
   png: { tipo: "image", mime: "image/png" },
   m4a: { tipo: "audio", mime: "audio/mp4" },
   ogg: { tipo: "audio", mime: "audio/ogg" },
+  mp3: { tipo: "audio", mime: "audio/mpeg" },
 };
-const EXTENSION: Record<string, string> = { "image/jpeg": "jpg", "image/png": "png", "audio/mp4": "m4a", "audio/ogg": "ogg" };
+const EXTENSION: Record<string, string> = {
+  "image/jpeg": "jpg",
+  "image/png": "png",
+  "audio/mp4": "m4a",
+  "audio/ogg": "ogg",
+  "audio/mpeg": "mp3",
+};
 /**
- * Formato de audio que acepta cada canal: WhatsApp solo nota de voz OGG/Opus (rechaza el M4A del
- * navegador); Instagram rechaza OGG y acepta M4A; Messenger acepta M4A.
+ * Formato de audio que acepta cada canal: WhatsApp nota de voz OGG/Opus o, de respaldo en iPhones
+ * que no pueden crearla, MP3 (rechaza el M4A del navegador); Instagram rechaza OGG y acepta M4A;
+ * Messenger acepta M4A.
  */
-const AUDIO_DEL_CANAL: Record<string, string> = { whatsapp: "ogg", facebook: "m4a", instagram: "m4a" };
+const AUDIO_DEL_CANAL: Record<string, string[]> = { whatsapp: ["ogg", "mp3"], facebook: ["m4a"], instagram: ["m4a"] };
 
 /** Conversación con los datos que hacen falta para enviar. La lectura pasa por RLS. */
 async function cargar(conversationId: string) {
@@ -137,7 +145,7 @@ export async function prepararSubida(
   const subidas: { ruta: string; token: string }[] = [];
   for (const a of archivos) {
     const ext = EXTENSION[a.mime.split(";")[0]];
-    if (!ext || FORMATOS[ext].tipo !== a.tipo || (a.tipo === "audio" && AUDIO_DEL_CANAL[conv.canal.platform] !== ext)) {
+    if (!ext || FORMATOS[ext].tipo !== a.tipo || (a.tipo === "audio" && !AUDIO_DEL_CANAL[conv.canal.platform]?.includes(ext))) {
       return {
         ok: false,
         mensaje:
@@ -159,7 +167,7 @@ export async function prepararSubida(
 
 /** Rutas subidas con `prepararSubida`: solo se aceptan las de esta conversación. */
 function leerAdjuntos(conversationId: string, fd: FormData) {
-  const patron = new RegExp(`^${conversationId}/enviados/[0-9a-f-]{36}\\.(jpg|png|m4a|ogg)$`);
+  const patron = new RegExp(`^${conversationId}/enviados/[0-9a-f-]{36}\\.(jpg|png|m4a|ogg|mp3)$`);
   const rutas = fd.getAll("adjunto").map(String);
   if (rutas.some((r) => !patron.test(r))) return null;
   return rutas.map((ruta) => ({ ruta, ...FORMATOS[ruta.split(".").pop()!] }));
@@ -239,7 +247,7 @@ export async function enviar(conversationId: string, _prev: Estado, fd: FormData
       if (audio && !CANALES_AUDIO.includes(platform)) {
         return { ok: false, mensaje: "Los audios solo se pueden enviar por WhatsApp, Messenger e Instagram." };
       }
-      if (audio && !audio.ruta.endsWith(`.${AUDIO_DEL_CANAL[platform]}`)) {
+      if (audio && !AUDIO_DEL_CANAL[platform]?.includes(audio.ruta.split(".").pop()!)) {
         return { ok: false, mensaje: "Este navegador no puede preparar audios para este canal. Actualiza Chrome o Safari." };
       }
       // Como abrir el chat en la app: lo que escribió el cliente queda como visto antes de responder.
@@ -269,7 +277,7 @@ export async function enviar(conversationId: string, _prev: Estado, fd: FormData
           message: conTexto ? texto : undefined,
           attachmentUrl: urls.get(a.ruta),
           attachmentType: a.tipo,
-          voiceNote: a.tipo === "audio" && platform === "whatsapp",
+          voiceNote: a.tipo === "audio" && platform === "whatsapp" && a.ruta.endsWith(".ogg"),
           idempotencyKey: llave(`${a.tipo === "audio" ? "a" : "f"}${i}`),
         });
         const id = await guardarSaliente(admin, conv.id, usuario.id, conTexto ? texto : null, r.messageId, undefined, a.tipo !== "audio");

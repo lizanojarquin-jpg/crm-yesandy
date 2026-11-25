@@ -2,6 +2,7 @@ import Link from "next/link";
 import { getUsuarioActual } from "@/lib/auth";
 import { Card } from "@/components/ui/card";
 import { GestorAvisos } from "./gestor";
+import { RevisarCelular } from "./revisar-celular";
 
 export const metadata = { title: "Avisos · CRM Yesandy" };
 
@@ -21,6 +22,21 @@ export default async function AvisosPage() {
         <Link href="/bienvenida" className="shrink-0 font-medium text-accent">
           Cambiar
         </Link>
+      </Card>
+      <Card className="mt-4">
+        <RevisarCelular />
+      </Card>
+      <Card className="mt-4 flex flex-col gap-1.5 text-sm">
+        <p className="font-medium">Permisos en iPhone (para que no los pida cada vez)</p>
+        <ul className="list-disc space-y-1 pl-5 text-muted">
+          <li>Ajustes → Apps → Safari → Micrófono → <b>Permitir</b>. Lo mismo en Cámara.</li>
+          <li>
+            O dentro de Safari, con el CRM abierto: toca <b>aA</b> junto a la dirección → Ajustes del sitio web → Micrófono y Cámara →{" "}
+            <b>Permitir</b>.
+          </li>
+          <li>Si el CRM está en la pantalla de inicio, iPhone puede volver a preguntar al abrirlo: es normal, toca Permitir.</li>
+          <li>Actualiza el iPhone (Ajustes → General → Actualización de software) para tener la nota de voz de WhatsApp.</li>
+        </ul>
       </Card>
       <Card className="mt-4 flex flex-col gap-1.5 text-sm">
         <p className="font-medium">Qué avisa</p>
