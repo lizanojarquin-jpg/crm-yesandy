@@ -135,22 +135,27 @@ function Ubicacion({ u }: { u: NonNullable<Mensaje["ubicacion"]> }) {
   const ll = `${u.latitude},${u.longitude}`;
   const d = 0.004;
   const bbox = [u.longitude - d, u.latitude - d * 0.6, u.longitude + d, u.latitude + d * 0.6].join(",");
+  const google = `https://www.google.com/maps/search/?api=1&query=${ll}`;
   const boton = "inline-flex h-8 flex-1 items-center justify-center rounded-lg bg-accent px-2 text-[13px] font-medium text-accent-foreground";
   return (
-    <div className="-mx-1 mb-1 w-64 max-w-full overflow-hidden rounded-xl border border-border bg-background text-foreground">
-      <iframe
-        title="Mapa de la ubicación del cliente"
-        src={`https://www.openstreetmap.org/export/embed.html?bbox=${bbox}&layer=mapnik&marker=${ll}`}
-        loading="lazy"
-        referrerPolicy="no-referrer"
-        sandbox="allow-scripts allow-same-origin"
-        className="pointer-events-none block h-36 w-full border-0"
-      />
+    <div className="-mx-1 mb-1 w-72 max-w-[calc(100vw-5rem)] overflow-hidden rounded-xl border border-border bg-background text-foreground">
+      {/* Tocar el mapa abre Google Maps (el mapa en sí no se mueve dentro del chat). */}
+      <a href={google} target="_blank" rel="noreferrer" aria-label="Abrir la ubicación en Google Maps" className="relative block">
+        <iframe
+          title="Mapa de la ubicación del cliente"
+          src={`https://www.openstreetmap.org/export/embed.html?bbox=${bbox}&layer=mapnik&marker=${ll}`}
+          loading="lazy"
+          referrerPolicy="no-referrer"
+          sandbox="allow-scripts allow-same-origin"
+          tabIndex={-1}
+          className="pointer-events-none block h-48 w-full border-0"
+        />
+      </a>
       <div className="p-2">
         <p className="text-sm font-medium">📍 {u.name || "Ubicación del cliente"}</p>
         {u.address && <p className="text-xs text-muted">{u.address}</p>}
         <div className="mt-2 flex gap-2">
-          <a href={`https://www.google.com/maps/search/?api=1&query=${ll}`} target="_blank" rel="noreferrer" className={boton}>
+          <a href={google} target="_blank" rel="noreferrer" className={boton}>
             Google Maps
           </a>
           <a href={`https://waze.com/ul?ll=${ll}&navigate=yes`} target="_blank" rel="noreferrer" className={boton}>
