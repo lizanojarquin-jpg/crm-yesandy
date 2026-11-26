@@ -4,8 +4,9 @@ import { startTransition, useActionState, useEffect, useRef, useState } from "re
 import { createClient } from "@/lib/supabase/client";
 import { convertirAOgg, puedeConvertirAOgg } from "@/lib/audio/ogg-opus";
 import { convertirAMp3 } from "@/lib/audio/mp3";
-import { comprimirFoto, esFoto } from "@/lib/fotos";
+import { comprimirFoto, esFoto, prepararFoto } from "@/lib/fotos";
 import { reportarFalla } from "@/lib/diagnostico-cliente";
+import { pedirMicrofono } from "@/lib/microfono";
 import { enviar, escribiendo, prepararSubida, type Estado } from "../acciones";
 import { PlantillaPicker, type PlantillaOpcion } from "./plantilla-picker";
 import { Grabadora } from "./grabadora";
@@ -24,8 +25,11 @@ async function prepararAudioWhatsApp(grabado: File): Promise<File> {
   return convertirAMp3(grabado);
 }
 
-/** Igual que en el servidor. */
-const MAX_FOTOS = 10;
+/** Fotos que se pueden juntar para enviar de una vez. */
+const MAX_FOTOS = 30;
+/** Salen en grupos de este tamaño (el máximo por envío del servidor). */
+const GRUPO = 10;
+const SE_CORTO = "Se cortó la conexión mientras se enviaba. Revisa el chat y toca enviar otra vez: lo que ya salió no se repite.";
 
 type Props = {
   conversationId: string;
@@ -75,6 +79,9 @@ export function Composer({
   const [grabando, setGrabando] = useState(false);
   const [subiendo, setSubiendo] = useState(false);
   const [preparando, setPreparando] = useState(false);
+  const [enviandoFotos, setEnviandoFotos] = useState(false);
+  const [progreso, setProgreso] = useState<string | null>(null);
+  const [microfono, setMicrofono] = useState<Promise<MediaStream> | null>(null);
   const [problema, setProblema] = useState<string | null>(null);
   const [privado, setPrivado] = useState(false);
   const [idem, setIdem] = useState(() => crypto.randomUUID());
@@ -94,7 +101,14 @@ export function Composer({
   };
 
   const [estado, accion, pendiente] = useActionState<Estado, FormData>(async (prev, fd) => {
-    const r = await enviar(conversationId, prev, fd);
+    let r: Estado;
+    try {
+      r = await enviar(conversationId, prev, fd);
+    } catch (e) {
+      // Sin esto, un corte de conexión a la mitad del envío tumba la página entera.
+      reportarFalla(fd.get("esAudio") === "1" ? "enviar audio" : "enviar mensaje", e);
+      return { ok: false, mensaje: SE_CORTO };
+    }
     if (r?.ok) {
       // Se limpia lo enviado y se prepara una llave nueva contra envíos dobles.
       if (fd.get("esAudio") === "1") {
@@ -109,7 +123,7 @@ export function Composer({
     return r;
   }, null);
 
-  const ocupado = pendiente || subiendo || preparando;
+  const ocupado = pendiente || subiendo || preparando || enviandoFotos;
   const error = problema ?? (estado && !estado.ok ? estado.mensaje : null);
 
   // La caja crece con el texto hasta 6 líneas.
@@ -161,13 +175,19 @@ export function Composer({
           return null;
         }
         const sb = createClient();
+        // De 3 en 3: con señal débil, muchas subidas a la vez fallan todas.
+        let siguiente = 0;
         await Promise.all(
-          r.subidas.map(async (s, i) => {
-            const { error } = await sb.storage
-              .from("attachments")
-              .uploadToSignedUrl(s.ruta, s.token, listos[i], { contentType: listos[i].type });
-            if (error) throw error;
-            subidos.current.set(faltan[i], s.ruta);
+          Array.from({ length: Math.min(3, r.subidas.length) }, async () => {
+            while (siguiente < r.subidas.length) {
+              const i = siguiente++;
+              const s = r.subidas[i];
+              const { error } = await sb.storage
+                .from("attachments")
+                .uploadToSignedUrl(s.ruta, s.token, listos[i], { contentType: listos[i].type });
+              if (error) throw error;
+              subidos.current.set(faltan[i], s.ruta);
+            }
           }),
         );
       }
@@ -183,14 +203,70 @@ export function Composer({
 
   async function mandar() {
     if (ocupado || (!texto.trim() && !fotos.length)) return;
-    const rutas = fotos.length ? await subir(fotos.map((f) => f.archivo), "image") : [];
-    if (!rutas) return;
+    if (fotos.length) return mandarFotos();
     const fd = new FormData();
     fd.set("mensaje", texto);
     fd.set("idem", idem);
     if (privado) fd.set("privado", "1");
-    rutas.forEach((r) => fd.append("adjunto", r));
     startTransition(() => accion(fd));
+  }
+
+  /**
+   * Las fotos salen en grupos de 10 (cada grupo es un envío corto) y las que ya salieron se quitan
+   * de la lista. Si algo falla, quedan solo las que faltan y se vuelve a tocar enviar.
+   */
+  async function mandarFotos() {
+    const lista = [...fotos];
+    const total = lista.length;
+    let pie = texto;
+    let hechas = 0;
+    setEnviandoFotos(true);
+    setProblema(null);
+    try {
+      while (hechas < total) {
+        const grupo = lista.slice(hechas, hechas + GRUPO);
+        setProgreso(total > GRUPO ? `enviando ${hechas + 1} a ${hechas + grupo.length} de ${total}…` : null);
+        const rutas = await subir(
+          grupo.map((f) => f.archivo),
+          "image",
+        );
+        if (!rutas) return;
+        const fd = new FormData();
+        fd.set("mensaje", pie);
+        fd.set("idem", idem);
+        rutas.forEach((r) => fd.append("adjunto", r));
+        const r = await enviar(conversationId, null, fd);
+        const salieron = r?.ok ? grupo.length : (r?.enviadas ?? 0);
+        if (salieron) {
+          quitarEnviadas(grupo.slice(0, salieron));
+          hechas += salieron;
+          // El texto va con la primera foto: ya salió.
+          if (pie) {
+            pie = "";
+            setTexto("");
+          }
+        }
+        if (!r?.ok) {
+          setProblema(
+            hechas ? `Se enviaron ${hechas} de ${total} fotos. Toca enviar otra vez para mandar las que faltan.` : (r?.mensaje ?? "No se pudo enviar."),
+          );
+          return;
+        }
+      }
+      if (archivo.current) archivo.current.value = "";
+      setIdem(crypto.randomUUID());
+    } catch (e) {
+      reportarFalla("enviar fotos", e, `${hechas} de ${total}`);
+      setProblema(SE_CORTO);
+    } finally {
+      setEnviandoFotos(false);
+      setProgreso(null);
+    }
+  }
+
+  function quitarEnviadas(enviadas: Foto[]) {
+    enviadas.forEach((f) => URL.revokeObjectURL(f.vista));
+    setFotos((a) => a.filter((f) => !enviadas.includes(f)));
   }
 
   /** El cliente ve "escribiendo…" (como máximo un aviso cada 15 s). En WhatsApp además queda leído. */
@@ -252,8 +328,8 @@ export function Composer({
           continue;
         }
         try {
-          const lista = await comprimirFoto(f);
-          setFotos((a) => [...a, { archivo: lista, vista: URL.createObjectURL(lista) }]);
+          const { archivo: lista, mini } = await prepararFoto(f);
+          setFotos((a) => [...a, { archivo: lista, vista: URL.createObjectURL(mini) }]);
         } catch (e) {
           fallidas++;
           reportarFalla("preparar foto", e, `${f.type || "sin tipo"} ${f.name} ${f.size} bytes`);
@@ -312,6 +388,7 @@ export function Composer({
 
       {grabando ? (
         <Grabadora
+          microfono={microfono}
           enviando={ocupado}
           onGrabando={avisarEscribiendo}
           onEnviar={mandarAudio}
@@ -381,7 +458,7 @@ export function Composer({
               </ul>
               <p className="mt-0.5 text-xs text-muted">
                 {fotos.length} {fotos.length === 1 ? "foto" : "fotos"} · cada una llega como un mensaje
-                {preparando ? " · preparando…" : subiendo ? " · subiendo…" : ""}
+                {preparando ? " · preparando…" : progreso ? ` · ${progreso}` : subiendo ? " · subiendo…" : enviandoFotos ? " · enviando…" : ""}
               </p>
             </div>
           )}
@@ -480,6 +557,15 @@ export function Composer({
                 type="button"
                 onClick={() => {
                   setProblema(null);
+                  // Se pide en el mismo toque: iPhone acepta mejor el permiso así.
+                  let pedido: Promise<MediaStream> | null = null;
+                  try {
+                    pedido = pedirMicrofono();
+                    pedido.catch(() => null); // el error lo muestra la grabadora
+                  } catch {
+                    // navegador sin micrófono: la grabadora lo explica
+                  }
+                  setMicrofono(pedido);
                   setGrabando(true);
                 }}
                 aria-label="Grabar audio"

@@ -7,7 +7,16 @@ export type Filtros = {
   cerradas?: boolean;
   /** Búsqueda por nombre o teléfono del cliente (abiertas y cerradas). */
   buscar?: string;
+  /** Administración: conversaciones de una persona del equipo (id) o las que nadie tomó ("libres"). */
+  vendedora?: string;
 };
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** Valor válido del filtro de vendedora: un id de perfil o "libres". */
+export function leerVendedora(v: string | undefined) {
+  return v === "libres" || (v && UUID.test(v)) ? v : undefined;
+}
 
 /** Texto de búsqueda seguro para el filtro de la base de datos (sin comas, paréntesis ni comodines). */
 function limpiarBusqueda(v: string | undefined) {
@@ -29,6 +38,7 @@ export function leerFiltros(sp: SP): Filtros {
     ver: ver === "sin_leer" || ver === "mias" || ver === "comentarios" ? ver : undefined,
     cerradas: uno(sp.estado) === "cerradas" || undefined,
     buscar: limpiarBusqueda(uno(sp.buscar)),
+    vendedora: leerVendedora(uno(sp.vendedora)),
   };
 }
 
@@ -41,6 +51,7 @@ export function qs(f: Filtros, cambios: Partial<Filtros> = {}) {
   if (x.ver) p.set("ver", x.ver);
   if (x.cerradas) p.set("estado", "cerradas");
   if (x.buscar) p.set("buscar", x.buscar);
+  if (x.vendedora) p.set("vendedora", x.vendedora);
   return p.toString();
 }
 

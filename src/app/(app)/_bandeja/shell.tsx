@@ -12,19 +12,21 @@ export function BandejaShell({
   activeId,
   usuarioId,
   ruta,
+  esAdmin,
   children,
 }: {
   filtros: Filtros;
   activeId?: string;
   usuarioId: string;
   ruta: string;
+  esAdmin: boolean;
   children: ReactNode;
 }) {
   return (
     <div className="lg:grid lg:h-dvh lg:grid-cols-[340px_minmax(0,1fr)]">
       <TiempoReal />
       <section className={`${activeId ? "hidden lg:flex" : "flex"} min-h-0 flex-col lg:border-r lg:border-border lg:bg-surface`}>
-        <ListaConversaciones filtros={filtros} activeId={activeId} usuarioId={usuarioId} ruta={ruta} />
+        <ListaConversaciones filtros={filtros} activeId={activeId} usuarioId={usuarioId} ruta={ruta} esAdmin={esAdmin} />
       </section>
       {children}
     </div>

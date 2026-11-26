@@ -20,6 +20,8 @@ import { Ficha } from "../../_bandeja/conversacion/ficha";
 import { MarcarLeida } from "../../_bandeja/conversacion/marcar-leida";
 
 export const metadata = { title: "Conversación · CRM Yesandy" };
+// Un grupo de 10 fotos tarda unos 12 s (a veces 30 s si WhatsApp va lento).
+export const maxDuration = 120;
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -133,7 +135,7 @@ export default async function ConversacionPage({
   );
 
   return (
-    <BandejaShell filtros={filtros} activeId={conv.id} usuarioId={usuario.id} ruta={`/c/${conv.id}`}>
+    <BandejaShell filtros={filtros} activeId={conv.id} usuarioId={usuario.id} ruta={`/c/${conv.id}`} esAdmin={esAdmin}>
       <MarcoConversacion
         cabecera={cabecera}
         cuerpo={cuerpo}

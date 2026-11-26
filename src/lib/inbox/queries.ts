@@ -27,6 +27,8 @@ export async function listarConversaciones(f: Filtros, usuarioId: string) {
   if (f.ver === "sin_leer") q = q.gt("unread_count", 0);
   if (f.ver === "mias") q = q.eq("assigned_to", usuarioId);
   if (f.ver === "comentarios") q = q.eq("kind", "comment");
+  if (f.vendedora === "libres") q = q.is("assigned_to", null);
+  else if (f.vendedora) q = q.eq("assigned_to", f.vendedora);
   const { data, error } = await q.returns<ConversacionLista[]>();
   if (error) throw error;
   return data ?? [];

@@ -1,7 +1,9 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import { reportarFalla } from "@/lib/diagnostico-cliente";
+import { esIphone, esIphoneInstalado, pedirMicrofono, soltarMicrofono } from "@/lib/microfono";
 
 /** Máximo de una grabación. */
 const MAX_SEGUNDOS = 180;
@@ -19,11 +21,14 @@ type Fase = "pidiendo" | "grabando" | "lista" | "sinSoporte" | "sinPermiso";
 
 /** Graba una nota de voz, la deja escuchar y la envía. Se monta al tocar el micrófono. */
 export function Grabadora({
+  microfono,
   enviando,
   onGrabando,
   onEnviar,
   onCerrar,
 }: {
+  /** El micrófono, pedido en el mismo toque del botón (así lo acepta mejor iPhone). */
+  microfono: Promise<MediaStream> | null;
   enviando: boolean;
   /** Se llama mientras graba (para el "escribiendo…" del cliente). */
   onGrabando?: () => void;
@@ -39,28 +44,26 @@ export function Grabadora({
   const [segundos, setSegundos] = useState(0);
   const [audio, setAudio] = useState<{ archivo: File; url: string } | null>(null);
   const grabador = useRef<MediaRecorder | null>(null);
-  const flujo = useRef<MediaStream | null>(null);
   const descartar = useRef(false);
   const avisar = useRef(onGrabando);
+  const pedido = useRef(microfono);
   useEffect(() => {
     avisar.current = onGrabando;
   }, [onGrabando]);
 
-  const soltarMicrofono = () => {
-    flujo.current?.getTracks().forEach((t) => t.stop());
-    flujo.current = null;
-  };
-
   // Empieza a grabar apenas se abre.
   useEffect(() => {
-    if (!formato) return;
+    if (!formato) {
+      pedido.current?.then(soltarMicrofono, () => null);
+      return;
+    }
     let vivo = true;
     descartar.current = false;
-    navigator.mediaDevices
-      .getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } })
+    (pedido.current ?? pedirMicrofono())
+      // Si ese micrófono ya se cerró (p. ej. la app pasó a segundo plano), se pide de nuevo.
+      .then((s) => (s.getAudioTracks().some((t) => t.readyState === "live") ? s : pedirMicrofono()))
       .then((s) => {
-        if (!vivo) return s.getTracks().forEach((t) => t.stop());
-        flujo.current = s;
+        if (!vivo) return soltarMicrofono();
         const partes: Blob[] = [];
         const r = new MediaRecorder(s, { mimeType: formato, audioBitsPerSecond: 64_000 });
         r.ondataavailable = (e) => e.data.size && partes.push(e.data);
@@ -76,7 +79,7 @@ export function Grabadora({
         setFase("grabando");
       })
       .catch((e) => {
-        reportarFalla("abrir micrófono", e);
+        reportarFalla("abrir micrófono", e, esIphoneInstalado() ? "iPhone app de inicio" : undefined);
         if (vivo) setFase("sinPermiso");
       });
     return () => {
@@ -130,9 +133,22 @@ export function Grabadora({
     return (
       <div className="flex items-center gap-2">
         <p role="alert" className="flex-1 text-sm text-danger">
-          {fase === "sinSoporte"
-            ? "Este navegador no puede grabar audios. Usa Chrome o Safari actualizados."
-            : "No hay permiso para el micrófono. En iPhone: Ajustes → Apps → Safari → Micrófono → Permitir. En Android: toca el candado junto a la dirección → Permisos → Micrófono."}
+          {fase === "sinSoporte" ? (
+            "Este navegador no puede grabar audios. Usa Chrome o Safari actualizados."
+          ) : esIphoneInstalado() ? (
+            <>
+              iPhone bloqueó el micrófono. Cierra el CRM por completo (desliza hacia arriba y quítalo), ábrelo y toca <b>Permitir</b>. Para
+              que no pregunte en cada audio, activa la{" "}
+              <Link href="/avisos#iphone" className="font-medium underline">
+                máxima compatibilidad
+              </Link>
+              .
+            </>
+          ) : esIphone() ? (
+            "No hay permiso para el micrófono. En Safari toca aA junto a la dirección → Ajustes del sitio web → Micrófono → Permitir."
+          ) : (
+            "No hay permiso para el micrófono. Toca el candado junto a la dirección → Permisos → Micrófono → Permitir."
+          )}
         </p>
         <button type="button" onClick={onCerrar} className="h-9 rounded-lg border border-border px-3 text-sm">
           Cerrar

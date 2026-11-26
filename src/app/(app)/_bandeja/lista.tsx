@@ -7,36 +7,46 @@ import { conQs, qs, type Filtros } from "@/lib/inbox/filtros";
 import { nombreContacto, PLATAFORMAS, textoEtapa } from "@/lib/inbox/etiquetas";
 import { horaCorta } from "@/lib/formato";
 import { SelectEtapa } from "./select-etapa";
+import { SelectVendedora } from "./select-vendedora";
 
 export async function ListaConversaciones({
   filtros,
   activeId,
   usuarioId,
   ruta,
+  esAdmin,
 }: {
   filtros: Filtros;
   activeId?: string;
   usuarioId: string;
   ruta: string;
+  esAdmin: boolean;
 }) {
-  const [convs, equipo] = await Promise.all([listarConversaciones(filtros, usuarioId), listarEquipo()]);
+  // Solo administración filtra por vendedora.
+  const f = esAdmin ? filtros : { ...filtros, vendedora: undefined };
+  const [convs, equipo] = await Promise.all([listarConversaciones(f, usuarioId), listarEquipo()]);
   const nombres = new Map(equipo.map((p) => [p.id, p.display_name]));
-  const q = qs(filtros);
-  const enlace = (cambios: Partial<Filtros>) => conQs(ruta, qs(filtros, cambios));
-  const hayFiltros = Boolean(filtros.canal || filtros.etapa || filtros.ver || filtros.cerradas || filtros.buscar);
+  const vendedora = f.vendedora === "libres" ? "Sin tomar" : f.vendedora ? nombres.get(f.vendedora) : null;
+  const q = qs(f);
+  const enlace = (cambios: Partial<Filtros>) => conQs(ruta, qs(f, cambios));
+  const hayFiltros = Boolean(f.canal || f.etapa || f.ver || f.cerradas || f.buscar || f.vendedora);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="flex flex-col gap-2 border-b border-border px-4 pt-4 pb-3">
         <div className="flex items-baseline justify-between">
-          <h1 className="text-lg font-semibold">{filtros.buscar ? "Búsqueda" : filtros.cerradas ? "Cerradas" : "Bandeja"}</h1>
-          <span className="text-xs text-muted">{convs.length === 150 ? "150+" : convs.length} conversaciones</span>
+          <h1 className="min-w-0 truncate text-lg font-semibold">
+            {f.buscar ? "Búsqueda" : f.cerradas ? "Cerradas" : "Bandeja"}
+            {vendedora && <span className="font-normal text-muted"> · {vendedora}</span>}
+          </h1>
+          <span className="shrink-0 text-xs text-muted">{convs.length === 150 ? "150+" : convs.length} conversaciones</span>
         </div>
         {/* Buscar por nombre o teléfono: conserva los demás filtros. */}
         <form action={ruta} method="get" role="search" className="relative">
-          {filtros.canal && <input type="hidden" name="canal" value={filtros.canal} />}
-          {filtros.etapa && <input type="hidden" name="etapa" value={filtros.etapa} />}
-          {filtros.ver && <input type="hidden" name="ver" value={filtros.ver} />}
+          {f.canal && <input type="hidden" name="canal" value={f.canal} />}
+          {f.etapa && <input type="hidden" name="etapa" value={f.etapa} />}
+          {f.ver && <input type="hidden" name="ver" value={f.ver} />}
+          {f.vendedora && <input type="hidden" name="vendedora" value={f.vendedora} />}
           <label htmlFor="buscar-chat" className="sr-only">
             Buscar chat por nombre o teléfono
           </label>
@@ -58,13 +68,13 @@ export async function ListaConversaciones({
             id="buscar-chat"
             name="buscar"
             type="search"
-            defaultValue={filtros.buscar ?? ""}
-            key={filtros.buscar ?? ""}
+            defaultValue={f.buscar ?? ""}
+            key={f.buscar ?? ""}
             placeholder="Buscar por nombre o teléfono"
             enterKeyHint="search"
             className="h-10 w-full rounded-full border border-border bg-background pr-9 pl-9 text-base outline-none focus:border-accent"
           />
-          {filtros.buscar && (
+          {f.buscar && (
             <Link
               href={enlace({ buscar: undefined })}
               aria-label="Quitar búsqueda"
@@ -75,17 +85,24 @@ export async function ListaConversaciones({
           )}
         </form>
         <div className="-mx-4 flex gap-1.5 overflow-x-auto px-4 pb-0.5 [scrollbar-width:none]">
-          <ChipEnlace href={enlace({ ver: undefined })} activo={!filtros.ver}>Todas</ChipEnlace>
-          <ChipEnlace href={enlace({ ver: filtros.ver === "sin_leer" ? undefined : "sin_leer" })} activo={filtros.ver === "sin_leer"}>
+          {esAdmin && (
+            <SelectVendedora
+              actual={f.vendedora}
+              base={qs(f, { vendedora: undefined })}
+              equipo={equipo}
+            />
+          )}
+          <ChipEnlace href={enlace({ ver: undefined })} activo={!f.ver}>Todas</ChipEnlace>
+          <ChipEnlace href={enlace({ ver: f.ver === "sin_leer" ? undefined : "sin_leer" })} activo={f.ver === "sin_leer"}>
             Sin leer
           </ChipEnlace>
-          <ChipEnlace href={enlace({ ver: filtros.ver === "mias" ? undefined : "mias" })} activo={filtros.ver === "mias"}>
+          <ChipEnlace href={enlace({ ver: f.ver === "mias" ? undefined : "mias" })} activo={f.ver === "mias"}>
             Mías
           </ChipEnlace>
-          <ChipEnlace href={enlace({ ver: filtros.ver === "comentarios" ? undefined : "comentarios" })} activo={filtros.ver === "comentarios"}>
+          <ChipEnlace href={enlace({ ver: f.ver === "comentarios" ? undefined : "comentarios" })} activo={f.ver === "comentarios"}>
             Comentarios
           </ChipEnlace>
-          <ChipEnlace href={enlace({ cerradas: !filtros.cerradas || undefined })} activo={Boolean(filtros.cerradas)}>
+          <ChipEnlace href={enlace({ cerradas: !f.cerradas || undefined })} activo={Boolean(f.cerradas)}>
             Cerradas
           </ChipEnlace>
         </div>
@@ -93,23 +110,23 @@ export async function ListaConversaciones({
           {PLATAFORMAS.map((p) => (
             <ChipEnlace
               key={p.valor}
-              href={enlace({ canal: filtros.canal === p.valor ? undefined : p.valor })}
-              activo={filtros.canal === p.valor}
+              href={enlace({ canal: f.canal === p.valor ? undefined : p.valor })}
+              activo={f.canal === p.valor}
             >
               <CanalPunto canal={p.valor} />
               {p.texto}
             </ChipEnlace>
           ))}
-          <SelectEtapa actual={filtros.etapa} base={qs(filtros, { etapa: undefined })} />
+          <SelectEtapa actual={f.etapa} base={qs(f, { etapa: undefined })} />
         </div>
       </div>
 
       {convs.length === 0 ? (
         <EmptyState
-          titulo={filtros.buscar ? `Ningún chat con «${filtros.buscar}»` : hayFiltros ? "Nada con estos filtros" : "Todavía no hay conversaciones"}
+          titulo={f.buscar ? `Ningún chat con «${f.buscar}»` : hayFiltros ? "Nada con estos filtros" : "Todavía no hay conversaciones"}
           descripcion={
             hayFiltros
-              ? filtros.buscar
+              ? f.buscar
                 ? "Prueba con otra parte del nombre o con el teléfono."
                 : "Prueba quitando algún filtro."
               : "Los mensajes y comentarios de WhatsApp, Facebook, Instagram y TikTok aparecen aquí al llegar."

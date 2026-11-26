@@ -5,6 +5,7 @@ import { convertirAOgg, puedeConvertirAOgg } from "@/lib/audio/ogg-opus";
 import { convertirAMp3 } from "@/lib/audio/mp3";
 import { comprimirFoto } from "@/lib/fotos";
 import { entornoDelCelular } from "@/lib/diagnostico-cliente";
+import { pedirMicrofono, soltarMicrofono } from "@/lib/microfono";
 import { guardarDiagnostico } from "./diagnostico-acciones";
 
 type Fila = { texto: string; ok: boolean | null };
@@ -42,7 +43,7 @@ export function RevisarCelular() {
     setOcupado(true);
     let flujo: MediaStream | null = null;
     try {
-      flujo = await navigator.mediaDevices.getUserMedia({ audio: true });
+      flujo = await pedirMicrofono();
       const tipo = ["audio/mp4;codecs=mp4a.40.2", "audio/mp4"].find((t) => MediaRecorder.isTypeSupported(t));
       if (!tipo) throw new Error("no graba M4A");
       const r = new MediaRecorder(flujo, { mimeType: tipo });
@@ -71,7 +72,7 @@ export function RevisarCelular() {
       agregar({ texto: `Micrófono: ${error(e)}`, ok: false });
       await guardar("prueba micrófono", `falla · ${error(e)}`);
     } finally {
-      flujo?.getTracks().forEach((t) => t.stop());
+      if (flujo) soltarMicrofono();
       setOcupado(false);
     }
   }

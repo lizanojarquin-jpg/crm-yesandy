@@ -2,11 +2,13 @@ import Link from "next/link";
 import { getUsuarioActual } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { Avatar } from "@/components/ui/avatar";
-import { Chip } from "@/components/ui/chip";
+import { Chip, ChipEnlace } from "@/components/ui/chip";
 import { EmptyState } from "@/components/ui/empty-state";
 import { nombreContacto, textoEtapa, type Etapa, type Plataforma } from "@/lib/inbox/etiquetas";
 import { fechaInput, fechaLarga, horaCorta } from "@/lib/formato";
 import { confirmarEtapa } from "../_bandeja/acciones";
+import { listarEquipo } from "@/lib/inbox/queries";
+import { leerVendedora } from "@/lib/inbox/filtros";
 
 export const metadata = { title: "Seguimiento · CRM Yesandy" };
 
@@ -34,9 +36,18 @@ const EN_CURSO: Etapa[] = ["order_confirmed", "payment_received", "shipped"];
 const FILA = "relative flex gap-3 border-b border-border/70 px-4 py-3 last:border-b-0 hover:bg-background";
 const ENLACE_FILA = "truncate font-medium after:absolute after:inset-0 after:content-[''] focus-visible:outline-none focus-visible:after:ring-2 focus-visible:after:ring-accent";
 
-export default async function SeguimientoPage() {
+export default async function SeguimientoPage({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
   const usuario = await getUsuarioActual();
   const esAdmin = usuario.rol === "admin";
+  const sp = await searchParams;
+  // Administración puede ver el seguimiento de una sola persona del equipo (o lo que nadie tomó).
+  const vendedora = esAdmin ? leerVendedora(Array.isArray(sp.vendedora) ? sp.vendedora[0] : sp.vendedora) : undefined;
+  const equipo = esAdmin ? await listarEquipo() : [];
+  const nombreVendedora = vendedora === "libres" ? "Sin tomar" : equipo.find((p) => p.id === vendedora)?.display_name;
   const sb = await createClient();
   const hoy = fechaInput(new Date().toISOString());
   const finHoy = `${hoy}T23:59:59-06:00`;
@@ -44,9 +55,11 @@ export default async function SeguimientoPage() {
 
   // Administración ve todo; ventas, solo los clientes de las conversaciones que tomó.
   const contactos = () =>
-    esAdmin
+    esAdmin && !vendedora
       ? sb.from("contacts").select(CAMPOS)
-      : sb.from("contacts").select(CAMPOS_MIOS).eq("conversations.assigned_to", usuario.id);
+      : vendedora === "libres"
+        ? sb.from("contacts").select(CAMPOS_MIOS).is("conversations.assigned_to", null)
+        : sb.from("contacts").select(CAMPOS_MIOS).eq("conversations.assigned_to", vendedora ?? usuario.id);
 
   const [porConfirmar, paraHoy, proximos, enCurso] = await Promise.all([
     contactos().eq("stage_pending_review", true).order("updated_at", { ascending: false }).limit(50).returns<Fila[]>(),
@@ -83,7 +96,7 @@ export default async function SeguimientoPage() {
     )
     .is("taken_by", null)
     .order("created_at", { ascending: false })
-    .limit(esAdmin ? 50 : 0)
+    .limit(esAdmin && (!vendedora || vendedora === "libres") ? 50 : 0)
     .returns<
       {
         id: string;
@@ -103,12 +116,30 @@ export default async function SeguimientoPage() {
 
   return (
     <div className="mx-auto max-w-3xl px-4 py-6">
-      <h1 className="text-xl font-semibold">Seguimiento</h1>
+      <h1 className="text-xl font-semibold">
+        Seguimiento{nombreVendedora && <span className="font-normal text-muted"> · {nombreVendedora}</span>}
+      </h1>
       <p className="text-sm text-muted">
         {esAdmin
           ? "Lo que pasó o detectó la IA, a quién escribirle hoy y los pedidos en curso. Toca un cliente para abrir su conversación."
           : "Tus clientes (las conversaciones que tomaste): a quién escribirle hoy y los pedidos en curso. Toca un cliente para abrir su conversación."}
       </p>
+
+      {esAdmin && (
+        <nav aria-label="Ver el seguimiento de" className="-mx-4 mt-3 flex gap-1.5 overflow-x-auto px-4 pb-0.5 [scrollbar-width:none]">
+          <ChipEnlace href="/seguimiento" activo={!vendedora}>
+            Todo el equipo
+          </ChipEnlace>
+          {equipo.map((p) => (
+            <ChipEnlace key={p.id} href={"/seguimiento?vendedora=" + p.id} activo={vendedora === p.id}>
+              {p.display_name}
+            </ChipEnlace>
+          ))}
+          <ChipEnlace href="/seguimiento?vendedora=libres" activo={vendedora === "libres"}>
+            Sin tomar
+          </ChipEnlace>
+        </nav>
+      )}
 
       {nada && (
         <EmptyState

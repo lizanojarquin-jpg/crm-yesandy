@@ -12,7 +12,7 @@ export default async function BandejaPage({
   const usuario = await getUsuarioActual();
   const filtros = leerFiltros(await searchParams);
   return (
-    <BandejaShell filtros={filtros} usuarioId={usuario.id} ruta="/">
+    <BandejaShell filtros={filtros} usuarioId={usuario.id} ruta="/" esAdmin={usuario.rol === "admin"}>
       <div className="hidden items-center justify-center lg:flex">
         <div className="text-center">
           <p className="font-medium">Elige una conversación</p>

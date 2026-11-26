@@ -21,8 +21,10 @@ import { avisarLiberado } from "@/lib/push";
 import { ventanaMensajes } from "@/lib/inbox/ventana";
 import { ETAPAS, type Etapa } from "@/lib/inbox/etiquetas";
 
-export type Estado = { ok: boolean; mensaje: string; n?: number } | null;
+/** `enviadas`: fotos que alcanzaron a salir (en orden) cuando el envío se cortó a la mitad. */
+export type Estado = { ok: boolean; mensaje: string; n?: number; enviadas?: number } | null;
 
+/** Fotos por envío. El chat manda más en grupos de este tamaño (cada grupo tarda unos 12 s). */
 const MAX_FOTOS = 10;
 const MAX_IMAGEN = 5 * 1024 * 1024; // límite de WhatsApp
 const MAX_AUDIO = 16 * 1024 * 1024; // límite de WhatsApp
@@ -278,7 +280,8 @@ export async function enviar(conversationId: string, _prev: Estado, fd: FormData
           attachmentUrl: urls.get(a.ruta),
           attachmentType: a.tipo,
           voiceNote: a.tipo === "audio" && platform === "whatsapp" && a.ruta.endsWith(".ogg"),
-          idempotencyKey: llave(`${a.tipo === "audio" ? "a" : "f"}${i}`),
+          // Cada foto subida tiene su propia llave: aunque se reintente en otro grupo, nunca sale dos veces.
+          idempotencyKey: a.tipo === "audio" ? llave(`a${i}`) : `foto-${a.ruta.split("/").pop()!.split(".")[0]}`,
         });
         const id = await guardarSaliente(admin, conv.id, usuario.id, conTexto ? texto : null, r.messageId, undefined, a.tipo !== "audio");
         if (id) {
@@ -310,9 +313,13 @@ export async function enviar(conversationId: string, _prev: Estado, fd: FormData
     const falla = explicar(e);
     if (fotos.length > 1 && enviadas > 0) {
       refresh();
-      return { ok: false, mensaje: `Se enviaron ${enviadas} de ${fotos.length} fotos. ${falla} Toca enviar otra vez para mandar las que faltan.` };
+      return {
+        ok: false,
+        enviadas,
+        mensaje: `Se enviaron ${enviadas} de ${fotos.length} fotos. ${falla} Toca enviar otra vez para mandar las que faltan.`,
+      };
     }
-    return { ok: false, mensaje: falla };
+    return { ok: false, mensaje: falla, enviadas };
   }
 
   // Si la IA había pasado la conversación, quien responde la atiende. Si la IA la tenía

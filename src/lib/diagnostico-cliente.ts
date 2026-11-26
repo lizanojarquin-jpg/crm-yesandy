@@ -1,6 +1,7 @@
 // Datos del celular para entender fallas (solo navegador): sistema, navegador, si está instalado
 // como app y qué formatos soporta. No incluye mensajes ni datos de clientes.
 import { guardarDiagnostico } from "@/app/(app)/avisos/diagnostico-acciones";
+import { microfonoSiempreListo } from "./microfono";
 
 export function entornoDelCelular(): Record<string, unknown> {
   const n = navigator as Navigator & { standalone?: boolean; deviceMemory?: number };
@@ -16,6 +17,7 @@ export function entornoDelCelular(): Record<string, unknown> {
     codificadorAudio: typeof AudioEncoder !== "undefined",
     microfono: Boolean(n.mediaDevices?.getUserMedia),
     createImageBitmap: typeof createImageBitmap === "function",
+    microfonoListo: microfonoSiempreListo(),
   };
 }
 
