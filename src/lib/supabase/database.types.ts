@@ -595,6 +595,7 @@ export type Database = {
       }
       messages: {
         Row: {
+          ad_referral: Json | null
           body: string | null
           conversation_id: string
           created_at: string
@@ -609,6 +610,7 @@ export type Database = {
           sender_type: Database["public"]["Enums"]["sender_type"]
         }
         Insert: {
+          ad_referral?: Json | null
           body?: string | null
           conversation_id: string
           created_at?: string
@@ -623,6 +625,7 @@ export type Database = {
           sender_type: Database["public"]["Enums"]["sender_type"]
         }
         Update: {
+          ad_referral?: Json | null
           body?: string | null
           conversation_id?: string
           created_at?: string

@@ -12,7 +12,7 @@ import { clasificarMensaje } from "@/lib/ia/clasificador";
 import { responderConIA } from "@/lib/ia/asesora";
 import { avisarMensajeNuevo } from "@/lib/push";
 import { transcribirAudiosDeMensaje } from "@/lib/ia/transcribir";
-import { completarMensaje, extrasDe, guardarExtras } from "./extras";
+import { completarMensaje, extrasDe, guardarAnuncio, guardarExtras, type MetadataWebhook } from "./extras";
 
 type Platform = Database["public"]["Enums"]["channel_platform"];
 type AttachmentType = Database["public"]["Enums"]["attachment_type"];
@@ -242,6 +242,8 @@ type MessageEvent = {
   };
   conversation?: { id?: string; participantId?: string | null; participantName?: string | null; participantUsername?: string | null } | null;
   account?: { accountId?: string; id?: string } | null;
+  /** Trae el anuncio de origen (referral) en el primer mensaje después de tocar un anuncio. */
+  metadata?: MetadataWebhook;
 };
 
 type CommentEvent = {
@@ -330,8 +332,12 @@ async function handleMessage(e: MessageEvent): Promise<ProcessResult> {
           console.error("cita/ubicación", messageId, err);
           return false;
         });
+  // Anuncio del que vino el cliente (también antes de la IA: así sabe qué producto vio).
+  const anuncio = inbound
+    ? guardarAnuncio(messageId, e.metadata ?? null).catch((err) => console.error("anuncio", messageId, err))
+    : Promise.resolve();
   if (m.attachments?.length) await saveAttachments(conversationId, messageId, m.attachments);
-  await completar;
+  await Promise.all([completar, anuncio]);
   // Notas de voz: se transcriben para que el equipo, el seguimiento y la IA las entiendan.
   let transcripcion: string | null = null;
   if (m.attachments?.some((a) => a.type === "audio")) {

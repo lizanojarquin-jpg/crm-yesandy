@@ -144,6 +144,8 @@ export type Mensaje = {
   ubicacion: { latitude: number; longitude: number; name?: string; address?: string } | null;
   /** Mensaje que el cliente (o el equipo) citó al responder. */
   cita: Cita | null;
+  /** Anuncio del que vino el cliente (solo en el primer mensaje después de tocarlo). */
+  anuncio: { titulo: string | null; texto: string | null; imagen: string | null; enlace: string | null; video: string | null } | null;
 };
 
 export type Cita = {
@@ -174,16 +176,17 @@ export async function listarMensajes(conversationId: string, opciones: { citas?:
     .from("messages")
     .select(
       "id, direction, sender_type, sender_profile_id, body, delivery_status, error_message, created_at, " +
-        `external_message_id, reply_to_external_id, location, ${CAMPOS_ADJUNTO}`,
+        `external_message_id, reply_to_external_id, location, ad_referral, ${CAMPOS_ADJUNTO}`,
     )
     .eq("conversation_id", conversationId)
     .order("created_at", { ascending: false })
     .limit(200)
     .returns<
-      (Omit<Mensaje, "adjuntos" | "evidencia" | "ubicacion" | "cita"> & {
+      (Omit<Mensaje, "adjuntos" | "evidencia" | "ubicacion" | "cita" | "anuncio"> & {
         external_message_id: string | null;
         reply_to_external_id: string | null;
         location: Mensaje["ubicacion"];
+        ad_referral: (NonNullable<Mensaje["anuncio"]> & { imagen_original: string | null }) | null;
         attachments: AdjuntoFila[];
       })[]
     >();
@@ -216,7 +219,11 @@ export async function listarMensajes(conversationId: string, opciones: { citas?:
   }
 
   const todosLosAdjuntos = [...filas.flatMap((m) => m.attachments), ...[...citados.values()].flatMap((m) => m.attachments)];
-  const rutas = [...new Set(todosLosAdjuntos.map((a) => a.storage_path).filter(Boolean) as string[])];
+  const rutas = [
+    ...new Set(
+      [...todosLosAdjuntos.map((a) => a.storage_path), ...filas.map((m) => m.ad_referral?.imagen)].filter(Boolean) as string[],
+    ),
+  ];
   const firmadas = new Map<string, string>();
   if (rutas.length) {
     const { data: urls } = await sb.storage.from("attachments").createSignedUrls(rutas, 60 * 60);
@@ -247,12 +254,22 @@ export async function listarMensajes(conversationId: string, opciones: { citas?:
 
   return filas.reverse().map((fila) => {
     // external_message_id solo sirve para encontrar las citas: no se manda a la pantalla.
-    const { attachments, reply_to_external_id, location, external_message_id, ...m } = fila;
+    const { attachments, reply_to_external_id, location, external_message_id, ad_referral: ad, ...m } = fila;
     void external_message_id;
     return {
       ...m,
       evidencia: evid.get(m.id) ?? null,
       ubicacion: location ?? null,
+      // Si la miniatura no se pudo copiar, se intenta con la original de Facebook (puede haber caducado).
+      anuncio: ad
+        ? {
+            titulo: ad.titulo,
+            texto: ad.texto,
+            imagen: (ad.imagen && firmadas.get(ad.imagen)) || ad.imagen_original,
+            enlace: ad.enlace,
+            video: ad.video,
+          }
+        : null,
       cita: citaDe(reply_to_external_id),
       adjuntos: attachments.map((a) => ({
         id: a.id,

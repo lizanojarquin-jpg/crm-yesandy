@@ -72,6 +72,7 @@ function Burbuja({
             : "rounded-bl-md border border-border bg-surface text-foreground"
         }`}
       >
+        {m.anuncio && <AnuncioOrigen a={m.anuncio} />}
         {m.cita && <CitaMensaje c={m.cita} />}
         {m.ubicacion && <Ubicacion u={m.ubicacion} />}
         {m.adjuntos.map((a) => (
@@ -127,6 +128,36 @@ function CitaMensaje({ c }: { c: NonNullable<Mensaje["cita"]> }) {
     </a>
   ) : (
     <div className={clase}>{contenido}</div>
+  );
+}
+
+/** El anuncio que el cliente tocó para escribir (como el recuadro "Viste este anuncio" de WhatsApp). */
+function AnuncioOrigen({ a }: { a: NonNullable<Mensaje["anuncio"]> }) {
+  const enlace = a.enlace ?? a.video;
+  return (
+    <div className="-mx-1 mb-1.5 w-64 max-w-[calc(100vw-5rem)] overflow-hidden rounded-xl border border-border bg-background text-foreground">
+      {a.imagen && (
+        // eslint-disable-next-line @next/next/no-img-element -- miniatura del anuncio (Supabase o Facebook)
+        <img src={a.imagen} alt={a.titulo ? `Anuncio: ${a.titulo}` : "Imagen del anuncio"} loading="lazy" className="max-h-56 w-full object-cover" />
+      )}
+      <div className="flex flex-col gap-0.5 p-2">
+        <span className="text-[11px] font-semibold tracking-wide text-accent uppercase">📣 Llegó por un anuncio</span>
+        {a.titulo && <span className="text-sm font-semibold break-words">{a.titulo}</span>}
+        {a.texto && (
+          // Tocar el texto lo muestra completo (y otra vez lo recoge).
+          <details className="group text-xs text-muted">
+            <summary className="line-clamp-3 cursor-pointer list-none break-words whitespace-pre-wrap group-open:line-clamp-none [&::-webkit-details-marker]:hidden">
+              {a.texto}
+            </summary>
+          </details>
+        )}
+        {enlace && (
+          <a href={enlace} target="_blank" rel="noreferrer" className="mt-1 text-[13px] font-medium text-accent underline">
+            Ver anuncio
+          </a>
+        )}
+      </div>
+    </div>
   );
 }
 

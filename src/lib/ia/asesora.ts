@@ -563,7 +563,7 @@ export async function historialParaIA(conversationId: string) {
   const { data: recientes } = await db
     .from("messages")
     .select(
-      "id, direction, sender_type, body, created_at, external_message_id, reply_to_external_id, location, " +
+      "id, direction, sender_type, body, created_at, external_message_id, reply_to_external_id, location, ad_referral, " +
         "attachments(type, storage_path, external_url, transcript)",
     )
     .eq("conversation_id", conversationId)
@@ -579,6 +579,7 @@ export async function historialParaIA(conversationId: string) {
         external_message_id: string | null;
         reply_to_external_id: string | null;
         location: { latitude: number; longitude: number; name?: string; address?: string } | null;
+        ad_referral: { titulo: string | null; texto: string | null; imagen: string | null } | null;
         attachments: { type: string; storage_path: string | null; external_url: string | null; transcript: string | null }[];
       }[]
     >();
@@ -593,13 +594,19 @@ export async function historialParaIA(conversationId: string) {
     return `(responde a ${q.direction === "inbound" ? "su propio mensaje" : "lo que le enviamos"}: «${que}»)`;
   };
 
-  // Fotos del cliente con enlace temporal para que el modelo las vea.
+  /** "(llegó por el anuncio «…»: …)" para que la IA sepa qué promoción o producto vio el cliente. */
+  const anuncioParaIA = (a: (typeof hist)[number]["ad_referral"]) =>
+    a ? `(llegó por el anuncio${a.titulo ? ` «${a.titulo}»` : ""}${a.texto ? `: ${a.texto.replace(/\s+/g, " ").slice(0, 400)}` : ""})` : null;
+
+  // Fotos del cliente (y la del anuncio del que vino) con enlace temporal para que el modelo las vea.
   const rutas = hist.flatMap((m) =>
     (m.direction === "inbound" ? m.attachments : []).filter((a) => a.type === "image" && a.storage_path).map((a) => a.storage_path!),
   );
+  const rutaAnuncio = hist.findLast((m) => m.ad_referral?.imagen)?.ad_referral?.imagen ?? null;
   const firmadas = new Map<string, string>();
-  if (rutas.length) {
-    const { data: urls } = await db.storage.from("attachments").createSignedUrls(rutas.slice(-4), 10 * 60);
+  const aFirmar = [...rutas.slice(-4), ...(rutaAnuncio ? [rutaAnuncio] : [])];
+  if (aFirmar.length) {
+    const { data: urls } = await db.storage.from("attachments").createSignedUrls(aFirmar, 10 * 60);
     for (const u of urls ?? []) if (u.path && u.signedUrl) firmadas.set(u.path, u.signedUrl);
   }
   const turnos: Turno[] = hist.map((m) => ({
@@ -607,6 +614,7 @@ export async function historialParaIA(conversationId: string) {
     // Las notas de voz transcritas se leen como texto.
     texto:
       [
+        anuncioParaIA(m.ad_referral),
         citaParaIA(m.reply_to_external_id),
         m.location
           ? `(envió su ubicación: ${m.location.name ? `${m.location.name}, ` : ""}${m.location.address ? `${m.location.address}, ` : ""}` +
@@ -616,10 +624,12 @@ export async function historialParaIA(conversationId: string) {
       ]
         .filter(Boolean)
         .join("\n") || null,
-    imagenes: m.attachments
-      .filter((a) => a.type === "image")
-      .map((a) => (a.storage_path ? firmadas.get(a.storage_path) : m.direction === "outbound" ? a.external_url : null))
-      .filter((u): u is string => Boolean(u)),
+    imagenes: [
+      ...(m.ad_referral?.imagen && m.ad_referral.imagen === rutaAnuncio ? [firmadas.get(rutaAnuncio)] : []),
+      ...m.attachments
+        .filter((a) => a.type === "image")
+        .map((a) => (a.storage_path ? firmadas.get(a.storage_path) : m.direction === "outbound" ? a.external_url : null)),
+    ].filter((u): u is string => Boolean(u)),
     otros: m.attachments
       .filter((a) => a.type !== "image" && !a.transcript)
       .map((a) => (a.type === "audio" ? "audio" : a.type === "video" ? "video" : "archivo")),
