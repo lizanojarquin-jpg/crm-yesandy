@@ -24,7 +24,7 @@ export async function listarConversaciones(f: Filtros, usuarioId: string) {
   }
   if (f.canal) q = q.eq("canal.platform", f.canal);
   if (f.etapa) q = q.eq("contacto.stage", f.etapa);
-  if (f.ver === "sin_leer") q = q.gt("unread_count", 0);
+  if (f.sinLeer) q = q.gt("unread_count", 0);
   if (f.ver === "mias") q = q.eq("assigned_to", usuarioId);
   if (f.ver === "comentarios") q = q.eq("kind", "comment");
   if (f.vendedora === "libres") q = q.is("assigned_to", null);
@@ -32,6 +32,19 @@ export async function listarConversaciones(f: Filtros, usuarioId: string) {
   const { data, error } = await q.returns<ConversacionLista[]>();
   if (error) throw error;
   return data ?? [];
+}
+
+/** Cuántas conversaciones abiertas tienen mensajes sin leer (las mías, las de una vendedora o todas). */
+export async function contarSinLeer(f: Filtros, usuarioId: string) {
+  const sb = await createClient();
+  // Sin "head": con la sesión del usuario esa variante devolvía 0.
+  let q = sb.from("conversations").select("id", { count: "exact" }).eq("status", "open").gt("unread_count", 0).limit(1);
+  if (f.ver === "mias") q = q.eq("assigned_to", usuarioId);
+  if (f.ver === "comentarios") q = q.eq("kind", "comment");
+  if (f.vendedora === "libres") q = q.is("assigned_to", null);
+  else if (f.vendedora) q = q.eq("assigned_to", f.vendedora);
+  const { count } = await q;
+  return count ?? 0;
 }
 
 export type ConversacionLista = {

@@ -2,7 +2,7 @@ import Link from "next/link";
 import { Avatar, CanalPunto } from "@/components/ui/avatar";
 import { Chip, ChipEnlace } from "@/components/ui/chip";
 import { EmptyState } from "@/components/ui/empty-state";
-import { listarConversaciones, listarEquipo } from "@/lib/inbox/queries";
+import { contarSinLeer, listarConversaciones, listarEquipo } from "@/lib/inbox/queries";
 import { conQs, qs, type Filtros } from "@/lib/inbox/filtros";
 import { nombreContacto, PLATAFORMAS, textoEtapa } from "@/lib/inbox/etiquetas";
 import { horaCorta } from "@/lib/formato";
@@ -24,12 +24,12 @@ export async function ListaConversaciones({
 }) {
   // Solo administración filtra por vendedora.
   const f = esAdmin ? filtros : { ...filtros, vendedora: undefined };
-  const [convs, equipo] = await Promise.all([listarConversaciones(f, usuarioId), listarEquipo()]);
+  const [convs, equipo, sinLeer] = await Promise.all([listarConversaciones(f, usuarioId), listarEquipo(), contarSinLeer(f, usuarioId)]);
   const nombres = new Map(equipo.map((p) => [p.id, p.display_name]));
   const vendedora = f.vendedora === "libres" ? "Sin tomar" : f.vendedora ? nombres.get(f.vendedora) : null;
   const q = qs(f);
   const enlace = (cambios: Partial<Filtros>) => conQs(ruta, qs(f, cambios));
-  const hayFiltros = Boolean(f.canal || f.etapa || f.ver || f.cerradas || f.buscar || f.vendedora);
+  const hayFiltros = Boolean(f.canal || f.etapa || f.ver || f.sinLeer || f.cerradas || f.buscar || f.vendedora);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -46,6 +46,7 @@ export async function ListaConversaciones({
           {f.canal && <input type="hidden" name="canal" value={f.canal} />}
           {f.etapa && <input type="hidden" name="etapa" value={f.etapa} />}
           {f.ver && <input type="hidden" name="ver" value={f.ver} />}
+          {f.sinLeer && <input type="hidden" name="sin_leer" value="1" />}
           {f.vendedora && <input type="hidden" name="vendedora" value={f.vendedora} />}
           <label htmlFor="buscar-chat" className="sr-only">
             Buscar chat por nombre o teléfono
@@ -92,12 +93,24 @@ export async function ListaConversaciones({
               equipo={equipo}
             />
           )}
-          <ChipEnlace href={enlace({ ver: undefined })} activo={!f.ver}>Todas</ChipEnlace>
-          <ChipEnlace href={enlace({ ver: f.ver === "sin_leer" ? undefined : "sin_leer" })} activo={f.ver === "sin_leer"}>
-            Sin leer
+          <ChipEnlace href={enlace({ ver: undefined, sinLeer: undefined })} activo={!f.ver && !f.sinLeer}>
+            Todas
           </ChipEnlace>
           <ChipEnlace href={enlace({ ver: f.ver === "mias" ? undefined : "mias" })} activo={f.ver === "mias"}>
             Mías
+          </ChipEnlace>
+          {/* Se combina con "Mías": cada vendedora ve sus chats sin leer. */}
+          <ChipEnlace href={enlace({ sinLeer: !f.sinLeer || undefined })} activo={Boolean(f.sinLeer)}>
+            Sin leer
+            {sinLeer > 0 && (
+              <span
+                className={`flex h-5 min-w-5 items-center justify-center rounded-full px-1.5 text-[11px] font-semibold ${
+                  f.sinLeer ? "bg-accent-foreground text-accent" : "bg-accent text-accent-foreground"
+                }`}
+              >
+                {sinLeer > 99 ? "99+" : sinLeer}
+              </span>
+            )}
           </ChipEnlace>
           <ChipEnlace href={enlace({ ver: f.ver === "comentarios" ? undefined : "comentarios" })} activo={f.ver === "comentarios"}>
             Comentarios

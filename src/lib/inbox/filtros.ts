@@ -3,7 +3,9 @@ import { ETAPAS, PLATAFORMAS, type Etapa, type Plataforma } from "./etiquetas";
 export type Filtros = {
   canal?: Plataforma;
   etapa?: Etapa;
-  ver?: "sin_leer" | "mias" | "comentarios";
+  ver?: "mias" | "comentarios";
+  /** Solo las que tienen mensajes sin leer. Se combina con "Mías" y con la vendedora. */
+  sinLeer?: boolean;
   cerradas?: boolean;
   /** Búsqueda por nombre o teléfono del cliente (abiertas y cerradas). */
   buscar?: string;
@@ -35,7 +37,9 @@ export function leerFiltros(sp: SP): Filtros {
   return {
     canal: PLATAFORMAS.some((p) => p.valor === canal) ? (canal as Plataforma) : undefined,
     etapa: ETAPAS.some((e) => e.valor === etapa) ? (etapa as Etapa) : undefined,
-    ver: ver === "sin_leer" || ver === "mias" || ver === "comentarios" ? ver : undefined,
+    ver: ver === "mias" || ver === "comentarios" ? ver : undefined,
+    // "ver=sin_leer" es la dirección vieja: se sigue aceptando.
+    sinLeer: uno(sp.sin_leer) === "1" || ver === "sin_leer" || undefined,
     cerradas: uno(sp.estado) === "cerradas" || undefined,
     buscar: limpiarBusqueda(uno(sp.buscar)),
     vendedora: leerVendedora(uno(sp.vendedora)),
@@ -49,6 +53,7 @@ export function qs(f: Filtros, cambios: Partial<Filtros> = {}) {
   if (x.canal) p.set("canal", x.canal);
   if (x.etapa) p.set("etapa", x.etapa);
   if (x.ver) p.set("ver", x.ver);
+  if (x.sinLeer) p.set("sin_leer", "1");
   if (x.cerradas) p.set("estado", "cerradas");
   if (x.buscar) p.set("buscar", x.buscar);
   if (x.vendedora) p.set("vendedora", x.vendedora);

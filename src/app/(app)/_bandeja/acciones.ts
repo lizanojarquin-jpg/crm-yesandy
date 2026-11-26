@@ -432,15 +432,23 @@ async function guardarAdjunto(admin: Admin, messageId: string, ruta: string, mim
 // Acciones sobre la conversación (con la sesión del usuario: aplican las reglas RLS)
 // ---------------------------------------------------------------------
 export async function marcarLeida(conversationId: string) {
-  await getUsuarioActual();
+  const usuario = await getUsuarioActual();
   const sb = await createClient();
   const { data: c } = await sb
     .from("conversations")
-    .select("kind, unread_count, external_conversation_id, canal:channel_accounts(zernio_account_id)")
+    .select("kind, unread_count, assigned_to, external_conversation_id, canal:channel_accounts(zernio_account_id)")
     .eq("id", conversationId)
     .maybeSingle()
-    .returns<{ kind: string; unread_count: number; external_conversation_id: string; canal: { zernio_account_id: string } } | null>();
+    .returns<{
+      kind: string;
+      unread_count: number;
+      assigned_to: string | null;
+      external_conversation_id: string;
+      canal: { zernio_account_id: string };
+    } | null>();
   if (!c) return;
+  // Si la atiende otra persona, solo se mira: sigue sin leer para quien la atiende (y el cliente no ve "visto").
+  if (c.assigned_to && c.assigned_to !== usuario.id) return;
   if (c.unread_count > 0) await sb.from("conversations").update({ unread_count: 0 }).eq("id", conversationId);
   if (c.kind === "dm") {
     // Igual que abrir el chat en la app: en Messenger e Instagram el cliente ve su mensaje como visto
