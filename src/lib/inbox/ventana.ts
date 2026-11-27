@@ -18,7 +18,7 @@ export function ventanaMensajes(platform: Plataforma, ultimoEntrante: string | n
       puede: false,
       etiquetaAgente: false,
       aviso:
-        "Pasaron más de 24 horas desde el último mensaje del cliente. WhatsApp solo deja escribir de nuevo cuando el cliente escriba primero (o con una plantilla aprobada).",
+        "Pasaron más de 24 horas desde el último mensaje del cliente: WhatsApp no deja escribir texto libre desde el CRM. Usa una plantilla aprobada (abajo) o escríbele desde la app WhatsApp Business del celular; lo que mandes ahí también aparece aquí. Cuando el cliente responda, se vuelve a abrir.",
     };
   }
   if ((platform === "facebook" || platform === "instagram") && horas < 24 * 7) {

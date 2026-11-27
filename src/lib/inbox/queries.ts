@@ -10,7 +10,7 @@ export async function listarConversaciones(f: Filtros, usuarioId: string) {
   let q = sb
     .from("conversations")
     .select(
-      "id, kind, status, unread_count, last_message_at, last_message_preview, assigned_to, ai_mode, ai_attending, " +
+      "id, kind, status, unread_count, last_message_at, last_message_preview, last_inbound_at, assigned_to, ai_mode, ai_attending, " +
         "contacto:contacts!inner(id, name, phone, stage, stage_pending_review, contact_identities(handle)), " +
         "canal:channel_accounts!inner(platform)",
     )
@@ -54,6 +54,7 @@ export type ConversacionLista = {
   unread_count: number;
   last_message_at: string | null;
   last_message_preview: string | null;
+  last_inbound_at: string | null;
   assigned_to: string | null;
   ai_mode: "on" | "off" | "handoff";
   /** La asesora IA está atendiendo: ventas no la puede tomar todavía. */

@@ -9,7 +9,8 @@ import { marcarLeida } from "../acciones";
  */
 export function MarcarLeida({ id, sinLeer }: { id: string; sinLeer: number }) {
   useEffect(() => {
-    if (document.visibilityState === "visible") marcarLeida(id);
+    // Sin señal no pasa nada: se marca la próxima vez.
+    if (document.visibilityState === "visible") marcarLeida(id).catch(() => null);
   }, [id, sinLeer]);
   return null;
 }

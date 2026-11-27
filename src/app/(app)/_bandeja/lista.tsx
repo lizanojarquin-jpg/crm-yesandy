@@ -6,6 +6,7 @@ import { contarSinLeer, listarConversaciones, listarEquipo } from "@/lib/inbox/q
 import { conQs, qs, type Filtros } from "@/lib/inbox/filtros";
 import { nombreContacto, PLATAFORMAS, textoEtapa } from "@/lib/inbox/etiquetas";
 import { horaCorta } from "@/lib/formato";
+import { ventanaMensajes } from "@/lib/inbox/ventana";
 import { SelectEtapa } from "./select-etapa";
 import { SelectVendedora } from "./select-vendedora";
 
@@ -184,6 +185,9 @@ export async function ListaConversaciones({
                       <Chip tono={c.contacto.stage === "new" ? "neutro" : "acento"}>{textoEtapa(c.contacto.stage)}</Chip>
                       {c.contacto.stage_pending_review && <Chip tono="aviso">Por confirmar</Chip>}
                       {c.ai_attending && <Chip>IA atendiendo</Chip>}
+                      {c.kind === "dm" && c.canal.platform === "whatsapp" && !ventanaMensajes("whatsapp", c.last_inbound_at).puede && (
+                        <Chip>Pasaron 24 h · solo plantilla</Chip>
+                      )}
                       {c.ai_mode === "handoff" && !c.assigned_to && <Chip tono="aviso">Lista para tomar</Chip>}
                       {atiende && <span className="text-[11px] text-muted">Atiende {atiende}</span>}
                     </div>
